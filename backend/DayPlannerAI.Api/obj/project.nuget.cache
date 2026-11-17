@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "dgSpecHash": "cX6ZrlWOdlQ=",
+  "success": false,
+  "projectFilePath": "C:\\Users\\krisz\\HDD\\KRISTOF\\Egyetem\\MSc\\3. félév\\MI alk\\DayPlannerAI\\backend\\DayPlannerAI.Api\\DayPlannerAI.Api.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\krisz\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.15\\microsoft.aspnetcore.openapi.10.0.15.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\microsoft.entityframeworkcore\\10.0.4\\microsoft.entityframeworkcore.10.0.4.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\microsoft.entityframeworkcore.abstractions\\10.0.4\\microsoft.entityframeworkcore.abstractions.10.0.4.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\microsoft.entityframeworkcore.analyzers\\10.0.4\\microsoft.entityframeworkcore.analyzers.10.0.4.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\microsoft.entityframeworkcore.relational\\10.0.4\\microsoft.entityframeworkcore.relational.10.0.4.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\microsoft.extensions.apidescription.server\\10.0.0\\microsoft.extensions.apidescription.server.10.0.0.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\npgsql\\10.0.3\\npgsql.10.0.3.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\npgsql.entityframeworkcore.postgresql\\10.0.3\\npgsql.entityframeworkcore.postgresql.10.0.3.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\swashbuckle.aspnetcore\\11.0.1\\swashbuckle.aspnetcore.11.0.1.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\swashbuckle.aspnetcore.swagger\\11.0.1\\swashbuckle.aspnetcore.swagger.11.0.1.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\swashbuckle.aspnetcore.swaggergen\\11.0.1\\swashbuckle.aspnetcore.swaggergen.11.0.1.nupkg.sha512",
+    "C:\\Users\\krisz\\.nuget\\packages\\swashbuckle.aspnetcore.swaggerui\\11.0.1\\swashbuckle.aspnetcore.swaggerui.11.0.1.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1107",
+      "level": "Error",
+      "message": "Version conflict detected for Microsoft.OpenApi. Install/reference Microsoft.OpenApi 3.11.0 directly to project DayPlannerAI.Api to resolve this issue. \r\n DayPlannerAI.Api -> Swashbuckle.AspNetCore 11.0.1 -> Swashbuckle.AspNetCore.Swagger 11.0.1 -> Microsoft.OpenApi (>= 3.11.0) \r\n DayPlannerAI.Api -> Microsoft.AspNetCore.OpenApi 10.0.15 -> Microsoft.OpenApi (>= 2.13.0 && < 3.0.0).",
+      "projectPath": "C:\\Users\\krisz\\HDD\\KRISTOF\\Egyetem\\MSc\\3. félév\\MI alk\\DayPlannerAI\\backend\\DayPlannerAI.Api\\DayPlannerAI.Api.csproj",
+      "filePath": "C:\\Users\\krisz\\HDD\\KRISTOF\\Egyetem\\MSc\\3. félév\\MI alk\\DayPlannerAI\\backend\\DayPlannerAI.Api\\DayPlannerAI.Api.csproj",
+      "libraryId": "Microsoft.OpenApi",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
+}
