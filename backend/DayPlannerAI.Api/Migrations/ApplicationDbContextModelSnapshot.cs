@@ -22,6 +22,29 @@ namespace DayPlannerAI.Api.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GoogleCalendarConnection", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("ConnectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProtectedRefreshToken")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GoogleCalendarConnections");
+                });
+
             modelBuilder.Entity("DayPlannerAI.Api.Models.UserProfile", b =>
                 {
                     b.Property<int>("Id")
@@ -56,7 +79,7 @@ namespace DayPlannerAI.Api.Migrations
                         {
                             Id = 1,
                             CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            DisplayName = "SmartLife User",
+                            DisplayName = "DayPlannerAI User",
                             TimeZone = "Europe/Budapest"
                         });
                 });

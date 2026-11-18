@@ -17,6 +17,9 @@ namespace DayPlannerAI.Api.Data
 
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
 
+        public DbSet<GoogleCalendarConnection> GoogleCalendarConnections
+    => Set<GoogleCalendarConnection>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -46,6 +49,20 @@ namespace DayPlannerAI.Api.Data
                         2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
                 });
             });
+
+            modelBuilder.Entity<GoogleCalendarConnection>(entity =>
+                {
+                    entity.HasKey(x => x.Id);
+
+                    entity.Property(x => x.ProtectedRefreshToken)
+                        .IsRequired();
+
+                    entity.Property(x => x.ConnectedAt)
+                        .IsRequired();
+
+                    entity.Property(x => x.UpdatedAt)
+                        .IsRequired();
+                });
         }
     }
 }
