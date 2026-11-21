@@ -1,0 +1,409 @@
+.assistant-page {
+  width: 100%;
+  min-height: calc(100vh - 80px);
+  padding: 24px;
+  display: flex;
+  justify-content: center;
+  background: #f8fafc;
+  box-sizing: border-box;
+}
+
+.assistant-container {
+  width: 100%;
+  max-width: 1050px;
+  height: calc(100vh - 128px);
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.05);
+}
+
+.assistant-header {
+  min-height: 86px;
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.assistant-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.assistant-heading-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  color: #ffffff;
+  background: #334155;
+}
+
+.assistant-heading h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: #0f172a;
+}
+
+.assistant-heading p {
+  margin: 5px 0 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.assistant-clear-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.assistant-clear-button:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.assistant-clear-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.assistant-chat {
+  flex: 1;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+.assistant-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 85%;
+}
+
+.user-message {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.ai-message {
+  align-self: flex-start;
+}
+
+.assistant-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.user-message .assistant-avatar {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.assistant-message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.user-message .assistant-message-content {
+  align-items: flex-end;
+}
+
+.assistant-message-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.assistant-message-label time {
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+.assistant-message-bubble {
+  padding: 13px 16px;
+  border-radius: 4px 14px 14px 14px;
+  background: #f1f5f9;
+  color: #1e293b;
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.user-message .assistant-message-bubble {
+  border-radius: 14px 4px 14px 14px;
+  background: #334155;
+  color: #ffffff;
+}
+
+.assistant-typing {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 16px;
+  border-radius: 4px 14px 14px 14px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.assistant-spinner {
+  animation: assistant-spin 1.2s linear infinite;
+}
+
+@keyframes assistant-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.assistant-error {
+  margin: 0 24px 12px;
+  padding: 12px 15px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+.assistant-footer {
+  padding: 18px 24px 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.assistant-input-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.assistant-input-form:focus-within {
+  border-color: #64748b;
+  box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.1);
+}
+
+.assistant-input-form textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 140px;
+  resize: vertical;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #1e293b;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.assistant-input-form textarea::placeholder {
+  color: #94a3b8;
+}
+
+.assistant-send-button {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: #334155;
+  color: #ffffff;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    opacity 0.2s;
+}
+
+.assistant-send-button:hover:not(:disabled) {
+  background: #1e293b;
+}
+
+.assistant-send-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.assistant-input-hint {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.assistant-input-hint span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+@media (max-width: 768px) {
+  .assistant-page {
+    min-height: calc(100vh - 60px);
+    padding: 10px;
+  }
+
+  .assistant-container {
+    height: calc(100vh - 80px);
+    min-height: 450px;
+    border-radius: 12px;
+  }
+
+  .assistant-header {
+    padding: 14px;
+  }
+
+  .assistant-heading h1 {
+    font-size: 17px;
+  }
+
+  .assistant-heading p {
+    font-size: 11px;
+  }
+
+  .assistant-clear-button {
+    padding: 9px;
+  }
+
+  .assistant-clear-button span {
+    display: none;
+  }
+
+  .assistant-chat {
+    padding: 18px 12px;
+    gap: 20px;
+  }
+
+  .assistant-message {
+    max-width: 95%;
+  }
+
+  .assistant-footer {
+    padding: 12px;
+  }
+
+  .assistant-input-hint {
+    font-size: 10px;
+  }
+}
+
+.travel-plan-card {
+  margin: 16px 24px 0;
+  padding: 16px 18px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.travel-plan-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  color: #1e40af;
+  font-size: 14px;
+}
+
+.travel-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.travel-plan-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  color: #64748b;
+}
+
+.travel-plan-item > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #3b82f6;
+}
+
+.travel-plan-item div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.travel-plan-item span {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.travel-plan-item strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .travel-plan-card {
+    margin: 12px 12px 0;
+    padding: 13px;
+  }
+
+  .travel-plan-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  .assistant-input-hint {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

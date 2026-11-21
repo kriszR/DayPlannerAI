@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import Calendar from "./pages/Calendar";
 import Travel from "./pages/Travel";
 import Settings from "./pages/Settings";
+import Assistant from "./pages/Assistant";
 
 function App() {
     return (
@@ -17,6 +18,7 @@ function App() {
                     <Route path="/calendar" element={<Calendar />} />
                     <Route path="/travel" element={<Travel />} />
                     <Route path="/settings" element={<Settings />} />
+                    <Route path="/assistant" element={<Assistant />} />
                 </Route>
             </Routes>
         </BrowserRouter>
