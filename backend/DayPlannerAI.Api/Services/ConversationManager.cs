@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using DayPlannerAI.Api.DTOs;
 using DayPlannerAI.Api.Models;
@@ -11,21 +12,33 @@ public sealed class ConversationManager
         GetBudapestTimeZone();
 
     public bool IsTravelConversation(
-        IReadOnlyList<AiChatMessageRequest> messages)
+    IReadOnlyList<AiChatMessageRequest> messages)
     {
-        var text = string.Join(
-            " ",
-            messages
-                .Where(message => message.Role == "user")
-                .Select(message => message.Content))
-            .ToLowerInvariant();
+        var text = NormalizeForComparison(
+            string.Join(
+                " ",
+                messages
+                    .Where(message => message.Role == "user")
+                    .Select(message => message.Content)));
 
-        return text.Contains("bus") ||
-               text.Contains("menetrend") ||
-               text.Contains("utaz") ||
-               text.Contains("eljut") ||
-               text.Contains("vonat") ||
-               text.Contains("indulás");
+        string[] travelTerms =
+        [
+            "busz",
+        "jarat",
+        "menetrend",
+        "utaz",
+        "eljut",
+        "vonat",
+        "indul",
+        "erkez",
+        "kozleked",
+        "megallo",
+        "menni",
+        "mennek"
+        ];
+
+        return travelTerms.Any(term =>
+            text.Contains(term, StringComparison.Ordinal));
     }
 
     public TravelPlan BuildTravelPlan(
@@ -44,13 +57,13 @@ public sealed class ConversationManager
         var latestUserText = userMessages.LastOrDefault()?.Content ?? "";
 
         var extractedDeparture = ValidateMentionedLocation(
-            extraction.DepartureLocation,
-            allUserText,
-            isDestination: false);
+    extraction.DepartureLocation,
+    latestUserText,
+    isDestination: false);
 
         var extractedDestination = ValidateMentionedLocation(
             extraction.Destination,
-            allUserText,
+            latestUserText,
             isDestination: true);
 
         var newDate = ResolveTravelDate(latestUserText);
@@ -76,6 +89,100 @@ public sealed class ConversationManager
                     ? newTransportMode
                     : previousPlan?.TransportMode ?? "unknown"
         };
+    }
+
+    public string BuildTransferTimetableResponse(
+    TravelPlan plan,
+    IReadOnlyList<GtfsJourneyDto> journeys)
+    {
+        if (plan.DepartureLocation is null ||
+            plan.Destination is null ||
+            plan.TravelDate is null ||
+            plan.ArrivalTime is null)
+        {
+            throw new InvalidOperationException(
+                "The travel plan is incomplete.");
+        }
+
+        if (journeys.Count == 0)
+        {
+            return
+                $"Nem találtam közvetlen vagy egy átszállással teljesíthető " +
+                $"buszjáratot {plan.DepartureLocation} és {plan.Destination} között, " +
+                $"amely legkésőbb {plan.ArrivalTime.Value:HH:mm}-ra megérkezne. " +
+                "Ez nem zárja ki a több átszállással elérhető lehetőségeket.";
+        }
+
+        var orderedJourneys = journeys
+            .OrderByDescending(x => ParseGtfsTimeSeconds(x.ArrivalTime))
+            .ThenBy(x => x.TotalDurationMinutes)
+            .ToList();
+
+        var result = new StringBuilder();
+
+        result.AppendLine(
+            $"Nem találtam megfelelő közvetlen buszjáratot, " +
+            $"de találtam {journeys.Count} átszállásos lehetőséget.");
+
+        result.AppendLine();
+
+        result.AppendLine("Lehetséges útvonalak:");
+
+        for (var i = 0; i < orderedJourneys.Count; i++)
+        {
+            var journey = orderedJourneys[i];
+
+            result.AppendLine();
+            result.AppendLine(
+                $"{i + 1}. útvonal: " +
+                $"{journey.DepartureTime} – {journey.ArrivalTime}, " +
+                $"{journey.TotalDurationMinutes} perc, " +
+                $"{journey.TransferCount} átszállás.");
+
+            for (var legIndex = 0;
+                 legIndex < journey.Legs.Count;
+                 legIndex++)
+            {
+                var leg = journey.Legs[legIndex];
+
+                var routeName =
+                    leg.RouteShortName ??
+                    leg.RouteLongName ??
+                    leg.TripId;
+
+                result.AppendLine(
+                    $"  {legIndex + 1}. járat ({routeName}): " +
+                    $"{leg.DepartureTime} {leg.DepartureStop} → " +
+                    $"{leg.ArrivalTime} {leg.ArrivalStop}");
+
+                if (legIndex < journey.Legs.Count - 1)
+                {
+                    var nextLeg = journey.Legs[legIndex + 1];
+
+                    var waitingMinutes =
+                        (ParseGtfsTimeSeconds(nextLeg.DepartureTime) -
+                         ParseGtfsTimeSeconds(leg.ArrivalTime)) / 60;
+
+                    result.AppendLine(
+                        $"  Átszállási idő: {waitingMinutes} perc.");
+                }
+            }
+        }
+
+        var bestJourney = orderedJourneys[0];
+
+        var earlyMinutes = Math.Max(
+            0,
+            (int)(plan.ArrivalTime.Value.ToTimeSpan().TotalSeconds -
+                  ParseGtfsTimeSeconds(bestJourney.ArrivalTime)) / 60);
+
+        result.AppendLine();
+
+        result.AppendLine(
+            $"A legkésőbb érkező ajánlott útvonal " +
+            $"{earlyMinutes} perccel a kívánt időpont előtt érkezik.");
+
+        return result.ToString().Trim();
     }
 
     /* public string BuildNextResponse(
@@ -142,6 +249,164 @@ public sealed class ConversationManager
             "mert a menetrendi adatforrás nincs bekötve.";
     } */
 
+    public void ApplyLatestTimeIntent(
+        TravelPlan plan,
+        string latestUserText)
+    {
+        if (string.IsNullOrWhiteSpace(latestUserText))
+            return;
+
+        var text = NormalizeTravelIntent(latestUserText);
+
+        var now = GetBudapestNow();
+        var today = DateOnly.FromDateTime(now.DateTime);
+
+        // Explicit date recognition.
+        if (Regex.IsMatch(text, @"\bholnaputan\b"))
+        {
+            plan.TravelDate = today.AddDays(2);
+        }
+        else if (Regex.IsMatch(text, @"\bholnap\b"))
+        {
+            plan.TravelDate = today.AddDays(1);
+        }
+        else if (Regex.IsMatch(text, @"\bma\b|\bmai nap\b"))
+        {
+            plan.TravelDate = today;
+        }
+
+        // Current departure intent.
+        var wantsToDepartNow = Regex.IsMatch(
+            text,
+            @"\b(most|azonnal|jelenleg|ebben a pillanatban)\b");
+
+        if (wantsToDepartNow)
+        {
+            plan.TravelDate = today;
+            plan.DepartureTime = TimeOnly.FromDateTime(now.DateTime);
+            plan.ArrivalTime = null;
+            plan.SearchMode = "departAfter";
+
+            return;
+        }
+
+        // Explicit clock-time recognition.
+        var timeMatch = Regex.Match(
+            text,
+            @"(?<!\d)(?<hour>[01]?\d|2[0-3])[:.](?<minute>[0-5]\d)(?:\s*-?\s*(?<suffix>ra|re|kor))?(?!\d)");
+
+        if (!timeMatch.Success)
+            return;
+
+        if (!int.TryParse(timeMatch.Groups["hour"].Value, out var hour) ||
+            !int.TryParse(timeMatch.Groups["minute"].Value, out var minute))
+        {
+            return;
+        }
+
+        var requestedTime = new TimeOnly(hour, minute);
+        var suffix = timeMatch.Groups["suffix"].Value;
+
+        var arrivalIntent =
+            suffix is "ra" or "re" ||
+            Regex.IsMatch(text, @"\b(erjek|odaerjek|erkezzen|erkezni|erkezes)\b");
+
+        var departureIntent =
+            suffix == "kor" ||
+            Regex.IsMatch(text, @"\b(indulok|indulni|induljak|indulas)\b");
+
+        if (arrivalIntent)
+        {
+            plan.ArrivalTime = requestedTime;
+            plan.DepartureTime = null;
+            plan.SearchMode = "arriveBy";
+        }
+        else if (departureIntent)
+        {
+            plan.DepartureTime = requestedTime;
+            plan.ArrivalTime = null;
+            plan.SearchMode = "departAfter";
+        }
+    }
+
+    public string BuildDepartureTimetableResponse(
+    TravelPlan plan,
+    IReadOnlyList<GtfsDirectRouteDto> routes)
+    {
+        if (plan.DepartureLocation is null ||
+            plan.Destination is null ||
+            plan.TravelDate is null ||
+            plan.DepartureTime is null)
+        {
+            throw new InvalidOperationException(
+                "The travel plan is incomplete.");
+        }
+
+        if (routes.Count == 0)
+        {
+            return
+                $"Nem találtam a {plan.DepartureTime.Value:HH:mm} utáni " +
+                $"közvetlen buszjáratot {plan.DepartureLocation} és " +
+                $"{plan.Destination} között. Átszállásos lehetőségek még elérhetők lehetnek.";
+        }
+
+        var result = new StringBuilder();
+
+        result.AppendLine(
+            $"A {plan.DepartureTime.Value:HH:mm} utáni közvetlen járatok:");
+
+        result.AppendLine();
+
+        foreach (var route in routes)
+        {
+            var routeName =
+                route.RouteShortName ??
+                route.RouteLongName ??
+                route.TripId;
+
+            result.AppendLine(
+                $"- {routeName}: {route.DepartureTime} → {route.ArrivalTime}, " +
+                $"{route.DurationMinutes} perc.");
+
+            result.AppendLine(
+                $"  {route.DepartureStop} → {route.ArrivalStop}");
+        }
+
+        result.AppendLine();
+
+        result.AppendLine(
+            $"Összesen {routes.Count} megfelelő közvetlen járatot találtam.");
+
+        return result.ToString().Trim();
+    }
+
+    private static string NormalizeTravelIntent(string value)
+    {
+        var normalized = value.Normalize(NormalizationForm.FormD);
+
+        var result = new string(
+            normalized
+                .Where(character =>
+                    CharUnicodeInfo.GetUnicodeCategory(character) !=
+                    UnicodeCategory.NonSpacingMark)
+                .ToArray());
+
+        return result.ToLowerInvariant();
+    }
+
+    private static DateTimeOffset GetBudapestNow()
+    {
+        var timeZoneId = OperatingSystem.IsWindows()
+            ? "Central Europe Standard Time"
+            : "Europe/Budapest";
+
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+
+        return TimeZoneInfo.ConvertTime(
+            DateTimeOffset.UtcNow,
+            timeZone);
+    }
+
     private static string? ValidateMentionedLocation(
      string? candidate,
      string userText,
@@ -194,6 +459,114 @@ public sealed class ConversationManager
 
         return builder.ToString().Normalize(
             System.Text.NormalizationForm.FormC);
+    }
+
+    public string BuildTimetableResponse(
+    TravelPlan plan,
+    IReadOnlyList<GtfsDirectRouteDto> routes)
+    {
+        if (plan.DepartureLocation is null ||
+            plan.Destination is null ||
+            plan.TravelDate is null ||
+            plan.ArrivalTime is null)
+        {
+            throw new InvalidOperationException(
+                "The travel plan is incomplete.");
+        }
+
+        if (routes.Count == 0)
+        {
+            return
+                $"Nem találtam olyan közvetlen buszjáratot, amely " +
+                $"{plan.ArrivalTime.Value:HH:mm} előtt megérkezne " +
+                $"{plan.Destination} településre. " +
+                "Ez nem zárja ki az átszállásos lehetőségeket.";
+        }
+
+        var bestRoute = routes
+            .OrderByDescending(x => ParseGtfsTimeSeconds(x.ArrivalTime))
+            .First();
+
+        var requestedArrivalSeconds =
+            (int)plan.ArrivalTime.Value.ToTimeSpan().TotalSeconds;
+
+        var actualArrivalSeconds =
+            ParseGtfsTimeSeconds(bestRoute.ArrivalTime);
+
+        var earlyMinutes = Math.Max(
+            0,
+            (requestedArrivalSeconds - actualArrivalSeconds) / 60);
+
+        var routeName = bestRoute.RouteShortName
+            ?? bestRoute.RouteLongName
+            ?? bestRoute.TripId;
+
+        var result = new StringBuilder();
+
+        result.AppendLine(
+            $"Találtam {routes.Count} megfelelő közvetlen buszjáratot.");
+
+        result.AppendLine();
+
+        result.AppendLine(
+            $"A legkésőbb érkező megfelelő járat a {routeName}, " +
+            $"amely {bestRoute.DepartureTime}-kor indul " +
+            $"{bestRoute.DepartureStop} megállóból, " +
+            $"és {bestRoute.ArrivalTime}-kor érkezik " +
+            $"{bestRoute.ArrivalStop} megállóba.");
+
+        result.AppendLine();
+
+        result.AppendLine(
+            $"Ez {earlyMinutes} perccel a kívánt " +
+            $"{plan.ArrivalTime.Value:HH:mm}-s érkezés előtt van.");
+
+        result.AppendLine();
+
+        result.AppendLine("További megfelelő járatok:");
+
+        foreach (var route in routes.Take(5))
+        {
+            var name = route.RouteShortName
+                ?? route.RouteLongName
+                ?? route.TripId;
+
+            result.AppendLine(
+                $"- {name}: {route.DepartureTime} → {route.ArrivalTime}, " +
+                $"{route.DurationMinutes} perc.");
+        }
+
+        return result.ToString().Trim();
+    }
+
+    private static int ParseGtfsTimeSeconds(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new FormatException("GTFS time cannot be empty.");
+
+        var parts = value.Split(':');
+
+        if (parts.Length is not (2 or 3))
+            throw new FormatException($"Invalid GTFS time: {value}");
+
+        if (!int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var hours) ||
+            !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var minutes))
+        {
+            throw new FormatException($"Invalid GTFS time: {value}");
+        }
+
+        var seconds = 0;
+
+        if (parts.Length == 3 &&
+            !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out seconds))
+        {
+            throw new FormatException($"Invalid GTFS time: {value}");
+        }
+
+        if (hours < 0 || minutes is < 0 or > 59 || seconds is < 0 or > 59)
+            throw new FormatException($"Invalid GTFS time: {value}");
+
+        return checked(hours * 3600 + minutes * 60 + seconds);
     }
 
     private static DateOnly? ResolveTravelDate(string text)

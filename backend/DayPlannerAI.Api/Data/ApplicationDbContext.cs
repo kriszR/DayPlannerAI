@@ -20,6 +20,15 @@ namespace DayPlannerAI.Api.Data
         public DbSet<GoogleCalendarConnection> GoogleCalendarConnections
     => Set<GoogleCalendarConnection>();
 
+        public DbSet<GtfsAgency> GtfsAgencies => Set<GtfsAgency>();
+        public DbSet<GtfsStop> GtfsStops => Set<GtfsStop>();
+        public DbSet<GtfsRoute> GtfsRoutes => Set<GtfsRoute>();
+        public DbSet<GtfsTrip> GtfsTrips => Set<GtfsTrip>();
+        public DbSet<GtfsStopTime> GtfsStopTimes => Set<GtfsStopTime>();
+        public DbSet<GtfsCalendar> GtfsCalendars => Set<GtfsCalendar>();
+        public DbSet<GtfsCalendarDate> GtfsCalendarDates => Set<GtfsCalendarDate>();
+        public DbSet<GtfsFeedInfo> GtfsFeedInfos => Set<GtfsFeedInfo>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -63,6 +72,45 @@ namespace DayPlannerAI.Api.Data
                     entity.Property(x => x.UpdatedAt)
                         .IsRequired();
                 });
+
+            modelBuilder.Entity<GtfsAgency>()
+.HasKey(x => x.AgencyId);
+
+            modelBuilder.Entity<GtfsStop>()
+                .HasKey(x => x.StopId);
+
+            modelBuilder.Entity<GtfsStop>()
+                .HasIndex(x => x.StopName);
+
+            modelBuilder.Entity<GtfsRoute>()
+                .HasKey(x => x.RouteId);
+
+            modelBuilder.Entity<GtfsRoute>()
+                .HasIndex(x => x.RouteShortName);
+
+            modelBuilder.Entity<GtfsTrip>()
+                .HasKey(x => x.TripId);
+
+            modelBuilder.Entity<GtfsTrip>()
+                .HasIndex(x => x.ServiceId);
+
+            modelBuilder.Entity<GtfsStopTime>()
+                .HasKey(x => new { x.TripId, x.StopSequence });
+
+            modelBuilder.Entity<GtfsStopTime>()
+                .HasIndex(x => new { x.StopId, x.TripId });
+
+            modelBuilder.Entity<GtfsCalendar>()
+                .HasKey(x => x.ServiceId);
+
+            modelBuilder.Entity<GtfsCalendarDate>()
+                .HasKey(x => new { x.ServiceId, x.Date });
+
+            modelBuilder.Entity<GtfsCalendarDate>()
+                .HasIndex(x => x.Date);
+
+            modelBuilder.Entity<GtfsFeedInfo>()
+                .HasKey(x => x.Id);
         }
     }
 }

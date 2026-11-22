@@ -45,6 +45,265 @@ namespace DayPlannerAI.Api.Migrations
                     b.ToTable("GoogleCalendarConnections");
                 });
 
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsAgency", b =>
+                {
+                    b.Property<string>("AgencyId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgencyLang")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgencyName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgencyPhone")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgencyTimezone")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgencyUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("AgencyId");
+
+                    b.ToTable("GtfsAgencies");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsCalendar", b =>
+                {
+                    b.Property<string>("ServiceId")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("EndDate")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("Friday")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Monday")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Saturday")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ServiceDesc")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date");
+
+                    b.Property<bool>("Sunday")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Thursday")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Tuesday")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("Wednesday")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("ServiceId");
+
+                    b.ToTable("GtfsCalendars");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsCalendarDate", b =>
+                {
+                    b.Property<string>("ServiceId")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date");
+
+                    b.Property<int>("ExceptionType")
+                        .HasColumnType("integer");
+
+                    b.HasKey("ServiceId", "Date");
+
+                    b.HasIndex("Date");
+
+                    b.ToTable("GtfsCalendarDates");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsFeedInfo", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateOnly?>("FeedEndDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("FeedId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FeedLanguage")
+                        .HasColumnType("text");
+
+                    b.Property<DateOnly?>("FeedStartDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("FeedVersion")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PublisherName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PublisherUrl")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GtfsFeedInfos");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsRoute", b =>
+                {
+                    b.Property<string>("RouteId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgencyId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RouteColor")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RouteLongName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RouteNetwork")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RouteShortName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("RouteTextColor")
+                        .HasColumnType("text");
+
+                    b.Property<int>("RouteType")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RouteUrl")
+                        .HasColumnType("text");
+
+                    b.HasKey("RouteId");
+
+                    b.HasIndex("RouteShortName");
+
+                    b.ToTable("GtfsRoutes");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsStop", b =>
+                {
+                    b.Property<string>("StopId")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("LocationType")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ParentStation")
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlatformCode")
+                        .HasColumnType("text");
+
+                    b.Property<double?>("StopLat")
+                        .HasColumnType("double precision");
+
+                    b.Property<double?>("StopLon")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("StopName")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("StopId");
+
+                    b.HasIndex("StopName");
+
+                    b.ToTable("GtfsStops");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsStopTime", b =>
+                {
+                    b.Property<string>("TripId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("StopSequence")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("ArrivalSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("DepartureSeconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("DropOffType")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("PickupType")
+                        .HasColumnType("integer");
+
+                    b.Property<double?>("ShapeDistTraveled")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("StopId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("TripId", "StopSequence");
+
+                    b.HasIndex("StopId", "TripId");
+
+                    b.ToTable("GtfsStopTimes");
+                });
+
+            modelBuilder.Entity("DayPlannerAI.Api.Models.GtfsTrip", b =>
+                {
+                    b.Property<string>("TripId")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("DirectionId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RouteId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ServiceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ShapeId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TripHeadsign")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TripRealtimeId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("TripShortName")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("WheelchairAccessible")
+                        .HasColumnType("integer");
+
+                    b.HasKey("TripId");
+
+                    b.HasIndex("ServiceId");
+
+                    b.ToTable("GtfsTrips");
+                });
+
             modelBuilder.Entity("DayPlannerAI.Api.Models.UserProfile", b =>
                 {
                     b.Property<int>("Id")

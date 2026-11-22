@@ -1,6 +1,8 @@
 using System.Text.Json;
 using DayPlannerAI.Api.DTOs;
+using DayPlannerAI.Api.Models;
 using DayPlannerAI.Api.Services;
+using DayPlannerAI.Api.Services.Agent;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DayPlannerAI.Api.Controllers;
@@ -9,22 +11,18 @@ namespace DayPlannerAI.Api.Controllers;
 [Route("api/ai")]
 public class AiController : ControllerBase
 {
-    private readonly OllamaChatService _chatService;
     private readonly ILogger<AiController> _logger;
-
-    private readonly ConversationManager _conversationManager;
     private readonly ConversationStore _conversationStore;
+    private readonly OllamaAgentService _agentService;
 
-    public AiController(
-        OllamaChatService chatService,
+    public AiController(    
         ILogger<AiController> logger,
-        ConversationManager conversationManager,
-        ConversationStore conversationStore)
+        ConversationStore conversationStore,
+        OllamaAgentService agentService)
     {
-        _chatService = chatService;
         _logger = logger;
-        _conversationManager = conversationManager;
         _conversationStore = conversationStore;
+        _agentService = agentService;
     }
 
     [HttpPost("chat")]
@@ -97,53 +95,84 @@ public class AiController : ControllerBase
 
         try
         {
-            if (_conversationManager.IsTravelConversation(conversation))
+            var agentResult = await _agentService.ChatAsync(
+            conversation,
+            cancellationToken: cancellationToken);
+
+            TravelPlan? travelPlan = null;
+
+            var availableRoutes = new List<GtfsDirectRouteDto>();
+            var availableJourneys = new List<GtfsJourneyDto>();
+
+            // Extract structured travel data from the executed search tool.
+            var searchResult = agentResult.ToolResults
+                .LastOrDefault(x => x.ToolName == "search_bus_journeys");
+
+            if (searchResult is not null)
             {
-                var extraction = await _chatService.ExtractTravelPlanAsync(
-                    conversation,
-                    cancellationToken);
+                using var document = JsonDocument.Parse(
+                    searchResult.ResultJson);
 
-                var previousPlan = _conversationStore.GetTravelPlan(
-                    conversationId);
+                var root = document.RootElement;
 
-                var travelPlan = _conversationManager.BuildTravelPlan(
-                    previousPlan,
-                    extraction,
-                    conversation);
-
-                _conversationStore.SaveTravelPlan(
-                    conversationId,
-                    travelPlan);
-
-                var missingInformation =
-                    _conversationManager.GetMissingTravelInformation(travelPlan);
-
-                var latestUserMessage = conversation
-                    .Last(message => message.Role == "user")
-                    .Content;
-
-                var travelAnswer = await _chatService.GenerateTravelResponseAsync(
-                    travelPlan,
-                    missingInformation,
-                    latestUserMessage,
-                    cancellationToken);
-
-                return Ok(new AiChatResponse
+                if (root.TryGetProperty("success", out var success) &&
+                    success.ValueKind == JsonValueKind.True)
                 {
-                    Answer = travelAnswer,
-                    ConversationId = conversationId,
-                    TravelPlan = travelPlan
-                });
+                    var options = new JsonSerializerOptions(
+                        JsonSerializerDefaults.Web);
+
+                    if (root.TryGetProperty("travelPlan", out var planElement))
+                    {
+                        travelPlan = planElement.Deserialize<TravelPlan>(options);
+                    }
+
+                    if (root.TryGetProperty("availableRoutes", out var routesElement))
+                    {
+                        availableRoutes =
+                            routesElement.Deserialize<List<GtfsDirectRouteDto>>(options)
+                            ?? [];
+                    }
+
+                    if (root.TryGetProperty("availableJourneys", out var journeysElement))
+                    {
+                        availableJourneys =
+                            journeysElement.Deserialize<List<GtfsJourneyDto>>(options)
+                            ?? [];
+                    }
+                }
             }
 
-            var answer = await _chatService.SendMessageAsync(
-                conversation,
-                cancellationToken);
-
-            return Ok(new AiChatResponse
+            var response = new AiChatResponse
             {
-                Answer = answer,
-                ConversationId = conversationId
+                Answer = agentResult.Answer,
+                ConversationId = conversationId,
+                TravelPlan = travelPlan,
+                AvailableRoutes = availableRoutes,
+                AvailableJourneys = availableJourneys
+            };
+
+            return Ok(response);
+        }
+        catch (ArgumentException exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Invalid travel search parameters.");
+
+            return BadRequest(new
+            {
+                message = exception.Message
+            });
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Travel search could not be completed.");
+
+            return UnprocessableEntity(new
+            {
+                message = exception.Message
             });
         }
         catch (JsonException exception)
