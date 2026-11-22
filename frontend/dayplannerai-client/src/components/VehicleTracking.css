@@ -1,0 +1,194 @@
+.vehicle-tracking {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 12px;
+  background: var(--card-background, #fff);
+  color: var(--text-color, inherit);
+}
+
+.vehicle-tracking__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.vehicle-tracking__header h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.vehicle-tracking__header span,
+.vehicle-tracking__footer {
+  color: var(--text-secondary, #777);
+  font-size: 11px;
+}
+
+.vehicle-tracking__header button {
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+  background: var(--surface-secondary, #f5f5f5);
+  color: inherit;
+}
+
+.vehicle-tracking__map {
+  height: 300px;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.vehicle-tracking__leaflet {
+  height: 100%;
+  width: 100%;
+  z-index: 0;
+}
+
+.vehicle-tracking__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vehicle-tracking__stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-secondary, #f5f5f5);
+  min-width: 0;
+}
+
+.vehicle-tracking__stats span {
+  font-size: 10px;
+  color: var(--text-secondary, #777);
+}
+
+.vehicle-tracking__stats strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.vehicle-tracking__delays {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vehicle-tracking__delays h4 {
+  font-size: 13px;
+  margin: 0;
+}
+
+.vehicle-tracking__stop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color, #eee);
+  font-size: 12px;
+}
+
+.vehicle-tracking__stop strong {
+  white-space: nowrap;
+}
+
+.vehicle-tracking__footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vehicle-tracking__status,
+.vehicle-tracking__error,
+.vehicle-tracking__warning {
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.vehicle-tracking__status {
+  background: var(--surface-secondary, #f5f5f5);
+}
+
+.vehicle-tracking__error,
+.vehicle-tracking__warning {
+  background: #fff5e5;
+  color: #8a5200;
+}
+
+.travel-route-card__tracking-button {
+  margin-top: 14px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 8px;
+  background: var(--surface-secondary, #f5f5f5);
+  color: inherit;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .vehicle-tracking__stats {
+    grid-template-columns: 1fr;
+  }
+
+  .vehicle-tracking__map {
+    height: 250px;
+  }
+}
+.vehicle-tracking__agent {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vehicle-tracking__agent > button {
+  padding: 11px 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary-color, #2563eb);
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vehicle-tracking__agent > button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.vehicle-tracking__agent-answer {
+  padding: 12px;
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 9px;
+  background: var(--surface-secondary, #f5f5f5);
+}
+
+.vehicle-tracking__agent-answer h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.vehicle-tracking__agent-answer p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.vehicle-tracking__agent-error {
+  color: #b45309;
+  font-size: 12px;
+}

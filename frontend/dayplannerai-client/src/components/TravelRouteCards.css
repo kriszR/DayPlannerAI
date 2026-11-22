@@ -1,0 +1,155 @@
+.travel-routes {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+    width: 100%;
+}
+
+.travel-routes__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.travel-routes__header h3 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.travel-routes__header > span {
+    font-size: 12px;
+    color: var(--text-secondary, #777);
+}
+
+.travel-routes__list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.travel-route-card {
+    padding: 16px;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 12px;
+    background: var(--card-background, #ffffff);
+    color: var(--text-color, inherit);
+}
+
+.travel-route-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.travel-route-card__label {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 11px;
+    color: var(--text-secondary, #777);
+}
+
+.travel-route-card__header h4 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.travel-route-card__headsign {
+    font-size: 12px;
+    color: var(--text-secondary, #777);
+    text-align: right;
+}
+
+.travel-route-card__journey {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+}
+
+.travel-route-card__stop {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.travel-route-card__stop strong {
+    font-size: 21px;
+    font-weight: 700;
+}
+
+.travel-route-card__stop span {
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.travel-route-card__stop small {
+    font-size: 11px;
+    color: var(--text-secondary, #777);
+}
+
+.travel-route-card__stop--arrival {
+    text-align: right;
+    align-items: flex-end;
+}
+
+.travel-route-card__duration {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    min-width: 65px;
+}
+
+.travel-route-card__duration > span {
+    font-size: 11px;
+    color: var(--text-secondary, #777);
+    white-space: nowrap;
+}
+
+.travel-route-card__line {
+    width: 100%;
+    height: 2px;
+    background: var(--border-color, #d1d5db);
+    position: relative;
+}
+
+.travel-route-card__line span {
+    position: absolute;
+    top: 50%;
+    right: -1px;
+    width: 7px;
+    height: 7px;
+    border-top: 2px solid var(--text-secondary, #777);
+    border-right: 2px solid var(--text-secondary, #777);
+    transform: translateY(-50%) rotate(45deg);
+}
+
+@media (max-width: 480px) {
+    .travel-route-card {
+        padding: 12px;
+    }
+
+    .travel-route-card__journey {
+        gap: 7px;
+    }
+
+    .travel-route-card__stop strong {
+        font-size: 18px;
+    }
+
+    .travel-route-card__stop span {
+        font-size: 12px;
+    }
+
+    .travel-route-card__duration {
+        min-width: 48px;
+    }
+}

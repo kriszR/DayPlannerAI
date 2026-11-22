@@ -20,10 +20,54 @@ export interface AiChatRequest {
   messages: AiChatMessage[];
 }
 
+export interface GtfsDirectRoute {
+  tripId: string;
+  routeId: string;
+  routeShortName: string | null;
+  routeLongName: string | null;
+  tripHeadsign: string | null;
+  departureStop: string;
+  departurePlatform: string | null;
+  departureTime: string;
+  arrivalStop: string;
+  arrivalPlatform: string | null;
+  arrivalTime: string;
+  durationMinutes: number;
+  serviceDate: string;
+}
+
+export interface GtfsJourneyLeg {
+  tripId: string;
+  routeId: string;
+  routeShortName: string | null;
+  routeLongName: string | null;
+  tripHeadsign: string | null;
+  departureStop: string;
+  departurePlatform: string | null;
+  departureTime: string;
+  arrivalStop: string;
+  arrivalPlatform: string | null;
+  arrivalTime: string;
+  durationMinutes: number;
+}
+
+export interface GtfsJourney {
+  departureStop: string;
+  arrivalStop: string;
+  departureTime: string;
+  arrivalTime: string;
+  totalDurationMinutes: number;
+  transferCount: number;
+  serviceDate: string;
+  legs: GtfsJourneyLeg[];
+}
+
 export interface AiChatResponse {
   answer: string;
   conversationId: string;
   travelPlan: TravelPlan | null;
+  availableRoutes: GtfsDirectRoute[] | null;
+  availableJourneys: GtfsJourney[] | null;
 }
 
 export async function sendAiMessage(
