@@ -723,9 +723,13 @@ public sealed class GtfsRouteSearchService
                     continue;
 
                 // The result query already enforces the arrival deadline.
+                // Different platform/child-stop records can describe the same
+                // physical journey. Deduplicate by trips, times and transfer
+                // station instead of platform stop IDs.
                 var uniqueKey =
-                    $"{first.TripId}|{first.DepartureStopId}|{first.ArrivalStopId}|" +
-                    $"{second.TripId}|{second.DepartureStopId}|{second.ArrivalStopId}";
+                    $"{first.TripId}|{first.DepartureSeconds}|{first.ArrivalSeconds}|" +
+                    $"{transferStationId}|{second.TripId}|" +
+                    $"{second.DepartureSeconds}|{second.ArrivalSeconds}";
 
                 if (bestJourneys.Any(x => x.UniqueKey == uniqueKey))
                     continue;
@@ -733,13 +737,21 @@ public sealed class GtfsRouteSearchService
                 var candidateDurationSeconds =
                     second.ArrivalSeconds - first.DepartureSeconds;
 
+                // For departure-after searches, show the earliest feasible
+                // departure first. For arrive-by searches, prefer the latest
+                // feasible departure, then the shorter journey.
                 var insertIndex = bestJourneys.FindIndex(existing =>
-                    candidateDurationSeconds < existing.DurationSeconds ||
-                    (candidateDurationSeconds == existing.DurationSeconds &&
-                     second.ArrivalSeconds < existing.Second.ArrivalSeconds) ||
-                    (candidateDurationSeconds == existing.DurationSeconds &&
-                     second.ArrivalSeconds == existing.Second.ArrivalSeconds &&
-                     first.DepartureSeconds > existing.First.DepartureSeconds));
+                    departAfter.HasValue
+                        ? first.DepartureSeconds < existing.First.DepartureSeconds ||
+                          (first.DepartureSeconds == existing.First.DepartureSeconds &&
+                           (second.ArrivalSeconds < existing.Second.ArrivalSeconds ||
+                            (second.ArrivalSeconds == existing.Second.ArrivalSeconds &&
+                             candidateDurationSeconds < existing.DurationSeconds)))
+                        : first.DepartureSeconds > existing.First.DepartureSeconds ||
+                          (first.DepartureSeconds == existing.First.DepartureSeconds &&
+                           (candidateDurationSeconds < existing.DurationSeconds ||
+                            (candidateDurationSeconds == existing.DurationSeconds &&
+                             second.ArrivalSeconds < existing.Second.ArrivalSeconds))));
 
                 if (insertIndex < 0)
                 {

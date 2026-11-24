@@ -11,11 +11,14 @@ namespace DayPlannerAI.Api.Services.Tools;
 public sealed class SearchBusJourneysTool : IAgentTool
 {
     private readonly GtfsRouteSearchService _routeSearchService;
+    private readonly ILogger<SearchBusJourneysTool> _logger;
 
     public SearchBusJourneysTool(
-        GtfsRouteSearchService routeSearchService)
+        GtfsRouteSearchService routeSearchService,
+        ILogger<SearchBusJourneysTool> logger)
     {
         _routeSearchService = routeSearchService;
+        _logger = logger;
     }
 
     public string Name => "search_bus_journeys";
@@ -61,7 +64,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
             {
                 ["type"] = "string",
                 ["description"] =
-                    "Indulási idő HH:mm formátumban, vagy 'now' az azonnali induláshoz."
+                    "Indulási idő HH:mm formátumban. Ha a felhasználó most, azonnal vagy minél előbb szeretne indulni, kötelezően 'now' értéket adj meg; ne használj korábbi üzenetből származó fix időpontot."
             },
             ["arrivalTime"] = new JsonObject
             {
@@ -256,7 +259,44 @@ public sealed class SearchBusJourneysTool : IAgentTool
                     "A kiválasztott utazási dátum már elmúlt.");
             }
 
+            // On today's date, never search using an AI-generated time that
+            // has already passed. This is a defensive fallback for follow-up
+            // messages where the model may accidentally reuse an old time.
+            var requestedDepartureTime = departureTime;
+            if (travelPlan.TravelDate == today)
+            {
+                var currentTime = TimeOnly.FromDateTime(localNow.DateTime);
+                if (departureTime < currentTime)
+                {
+                    _logger.LogWarning(
+                        "Past departure time corrected. From={DepartureLocation}, To={Destination}, " +
+                        "TravelDate={TravelDate}, RequestedDepartureTime={RequestedDepartureTime}, " +
+                        "EffectiveDepartureTime={EffectiveDepartureTime}, LocalNow={LocalNow}.",
+                        departureLocation,
+                        destination,
+                        travelPlan.TravelDate,
+                        requestedDepartureTime,
+                        currentTime,
+                        localNow);
+
+                    departureTime = currentTime;
+                }
+            }
+
             travelPlan.DepartureTime = departureTime;
+
+            _logger.LogInformation(
+                "Bus journey search parameters. From={DepartureLocation}, To={Destination}, " +
+                "TravelDate={TravelDate}, SearchMode={SearchMode}, " +
+                "RequestedDepartureTime={RequestedDepartureTime}, EffectiveDepartureTime={EffectiveDepartureTime}, " +
+                "LocalNow={LocalNow}.",
+                departureLocation,
+                destination,
+                travelPlan.TravelDate,
+                searchMode,
+                requestedDepartureTime,
+                departureTime,
+                localNow);
 
             routes = await _routeSearchService.SearchDirectDeparturesAsync(
                 departureLocation,

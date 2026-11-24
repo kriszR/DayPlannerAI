@@ -11,10 +11,12 @@ public sealed class AgentSkillRegistry
     {
         _skills = skills.ToList();
 
-        _tools = _skills
+        _tools = skills
             .SelectMany(skill => skill.Tools)
+            .GroupBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
-                tool => tool.Name,
+                group => group.Key,
+                group => group.First(),
                 StringComparer.OrdinalIgnoreCase);
     }
 

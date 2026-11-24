@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using DayPlannerAI.Api.DTOs;
 
 namespace DayPlannerAI.Api.Services.Agent;
@@ -49,6 +51,9 @@ public sealed class OllamaAgentService
             throw new ArgumentException("Conversation cannot be empty.");
 
         var activeContext = DetermineActiveContext(conversation);
+        var isDailyPlanning = activeContext.SkillNames.Contains(
+            "DailyPlanningSkill",
+            StringComparer.OrdinalIgnoreCase);
         var messages = new List<JsonObject>
         {
             new()
@@ -57,7 +62,8 @@ public sealed class OllamaAgentService
                 ["content"] = BuildSystemPrompt(
                     selectedTripContext,
                     activeContext.SkillNames,
-                    activeContext.IsTravelRequest)
+                    activeContext.IsTravelRequest,
+                    isDailyPlanning)
             }
         };
 
@@ -78,15 +84,50 @@ public sealed class OllamaAgentService
             });
         }
 
+        var requiresDailyPlanBusSearch = false;
+        var modelToolNames = activeContext.ToolNames;
+
+        if (isDailyPlanning)
+        {
+            requiresDailyPlanBusSearch = await AddDailyPlanToolResultsAsync(
+                conversation,
+                messages,
+                executedToolResults,
+                cancellationToken);
+
+            var dailyDataToolNames = new HashSet<string>(
+                [
+                    "get_calendar_events",
+                    "get_weather_forecast",
+                    "get_user_profile"
+                ],
+                StringComparer.OrdinalIgnoreCase);
+
+            modelToolNames = activeContext.ToolNames
+                .Where(name => !dailyDataToolNames.Contains(name))
+                .ToArray();
+        }
+
         // Allow multiple tool execution and model response rounds.
+        // If the model skips a required bus search, retry once with only the
+        // bus-search tool available instead of silently returning an answer.
+        var forceBusSearch = false;
+
         for (var round = 0; round < MaxToolRounds; round++)
         {
+            var isForcedBusSearchRound = forceBusSearch;
+            IReadOnlyCollection<string>? availableToolNames = forceBusSearch
+                ? new[] { "search_bus_journeys" }
+                : modelToolNames;
+
             using var document = await SendChatRequestAsync(
                 messages,
                 includeTools: true,
-                requestStage: $"tool-selection round {round + 1}",
+                requestStage: forceBusSearch
+                    ? $"forced bus-search retry round {round + 1}"
+                    : $"tool-selection round {round + 1}",
                 cancellationToken,
-                activeContext.ToolNames);
+                availableToolNames);
 
             if (!document.RootElement.TryGetProperty(
                     "message",
@@ -122,19 +163,70 @@ public sealed class OllamaAgentService
 
             if (!hasToolCalls)
             {
-                if (activeContext.IsTravelRequest &&
-                    !executedToolResults.Any(x =>
-                        string.Equals(
-                            x.ToolName,
-                            "search_bus_journeys",
-                            StringComparison.OrdinalIgnoreCase)))
+                var busSearchWasExecuted = executedToolResults.Any(x =>
+                    string.Equals(
+                        x.ToolName,
+                        "search_bus_journeys",
+                        StringComparison.OrdinalIgnoreCase));
+
+                var busSearchIsRequired =
+                    activeContext.IsTravelRequest ||
+                    requiresDailyPlanBusSearch;
+
+                if (busSearchIsRequired &&
+                    !busSearchWasExecuted &&
+                    !forceBusSearch &&
+                    round < MaxToolRounds - 1)
                 {
                     _logger.LogWarning(
-                        "Travel intent was detected, but Ollama did not call search_bus_journeys.");
+                        "A required bus search was skipped. Retrying with only the bus-search tool enabled.");
+
+                    messages.Add(new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = "A menetrendi keresés még nem történt meg. " +
+                            "Most kizárólag a search_bus_journeys eszközt használd. " +
+                            "Az indulási helyet, célállomást, dátumot és időzítési módot " +
+                            "a felhasználó korábbi üzeneteiből, a profilt és naptárat " +
+                            "pedig a korábban visszakapott eszközeredményekből vedd át. " +
+                            "Ne találj ki adatot. Ha valamelyik kötelező adat hiányzik, " +
+                            "ne indíts keresést, hanem kérdezz vissza egyetlen konkrét kérdéssel. " +
+                            "Ha minden adat rendelkezésre áll, hívd meg most az eszközt."
+                    });
+
+                    forceBusSearch = true;
+                    continue;
+                }
+
+                if (busSearchIsRequired && !busSearchWasExecuted)
+                {
+                    _logger.LogWarning(
+                        "A required bus search was not executed after the forced retry.");
+                }
+
+                var responseContent = GetMessageContent(assistantMessage);
+
+                // A travel answer containing timetable claims is only allowed
+                // after the bus-search tool has actually run. If the model
+                // skips the tool, fail closed instead of inventing a journey.
+                if (busSearchIsRequired &&
+                    !executedToolResults.Any(x => string.Equals(
+                        x.ToolName,
+                        "search_bus_journeys",
+                        StringComparison.OrdinalIgnoreCase)) &&
+                    !string.IsNullOrWhiteSpace(responseContent) &&
+                    (!responseContent.Contains('?') || responseContent.Any(char.IsDigit)))
+                {
+                    _logger.LogWarning(
+                        "Travel response blocked because search_bus_journeys was not executed.");
+
+                    responseContent =
+                        "Nem tudok ellenőrzött buszjáratot megjeleníteni, mert a menetrendi keresés nem futott le. " +
+                        "Kérlek, ismételd meg az utazási kérést.";
                 }
 
                 return new AgentChatResult(
-                    GetMessageContent(assistantMessage),
+                    responseContent,
                     executedToolResults);
             }
 
@@ -199,6 +291,17 @@ public sealed class OllamaAgentService
                 });
             }
 
+            // A standalone travel search can return its deterministic answer
+            // directly. Daily planning must continue so the model can combine
+            // calendar, weather, profile, and bus-search results.
+            if (isDailyPlanning)
+            {
+                allToolsCanReturnDirectly = false;
+            }
+
+            if (isForcedBusSearchRound && isDailyPlanning)
+                forceBusSearch = false;
+
             // Skip another LLM generation when every tool has produced
             // a complete, deterministic user-facing answer.
             if (allToolsCanReturnDirectly &&
@@ -231,14 +334,247 @@ public sealed class OllamaAgentService
             var content = GetMessageContent(finalMessage);
 
             if (!string.IsNullOrWhiteSpace(content))
-                return new AgentChatResult(
-    content,
-    executedToolResults);
+            {
+                if ((activeContext.IsTravelRequest ||
+                     requiresDailyPlanBusSearch) &&
+                    !executedToolResults.Any(x => string.Equals(
+                        x.ToolName,
+                        "search_bus_journeys",
+                        StringComparison.OrdinalIgnoreCase)) &&
+                    (!content.Contains('?') || content.Any(char.IsDigit)))
+                {
+                    _logger.LogWarning(
+                        "Final travel response blocked because search_bus_journeys was not executed.");
+
+                    content =
+                        "Nem tudok ellenőrzött buszjáratot megjeleníteni, mert a menetrendi keresés nem futott le. " +
+                        "Kérlek, ismételd meg az utazási kérést.";
+                }
+
+                return new AgentChatResult(content, executedToolResults);
+            }
         }
 
         return new AgentChatResult(
     "A lekérdezést elvégeztem, de nem sikerült választ összeállítanom.",
     executedToolResults);
+    }
+
+    private async Task<bool> AddDailyPlanToolResultsAsync(
+        IReadOnlyList<AiChatMessageRequest> conversation,
+        List<JsonObject> messages,
+        List<AgentToolExecutionResult> executedToolResults,
+        CancellationToken cancellationToken)
+    {
+        var date = GetDailyPlanDate(conversation);
+        var profileArguments = new JsonObject();
+        var profileResult = await ExecuteToolAsync(
+            "get_user_profile",
+            profileArguments,
+            cancellationToken);
+
+        var results = new List<(string ToolName, JsonObject Arguments, string ResultJson)>
+        {
+            ("get_user_profile", profileArguments, profileResult)
+        };
+
+        var calendarArguments = new JsonObject
+        {
+            ["date"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+        };
+
+        var timeZone = GetProfileTimeZone(profileResult);
+        if (!string.IsNullOrWhiteSpace(timeZone))
+            calendarArguments["timeZone"] = timeZone;
+
+        results.Add((
+            "get_calendar_events",
+            calendarArguments,
+            await ExecuteToolAsync(
+                "get_calendar_events",
+                calendarArguments,
+                cancellationToken)));
+
+        var weatherArguments = new JsonObject
+        {
+            ["date"] = date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+        };
+
+        results.Add((
+            "get_weather_forecast",
+            weatherArguments,
+            await ExecuteToolAsync(
+                "get_weather_forecast",
+                weatherArguments,
+                cancellationToken)));
+
+        var toolCalls = new JsonArray();
+        foreach (var result in results)
+        {
+            toolCalls.Add(new JsonObject
+            {
+                ["type"] = "function",
+                ["function"] = new JsonObject
+                {
+                    ["name"] = result.ToolName,
+                    ["arguments"] = JsonNode.Parse(
+                        result.Arguments.ToJsonString())
+                }
+            });
+        }
+
+        messages.Add(new JsonObject
+        {
+            ["role"] = "assistant",
+            ["content"] = string.Empty,
+            ["tool_calls"] = toolCalls
+        });
+
+        foreach (var result in results)
+        {
+            executedToolResults.Add(new AgentToolExecutionResult(
+                result.ToolName,
+                result.ResultJson));
+
+            var modelResult = BuildModelFacingToolResult(
+                result.ToolName,
+                result.ResultJson);
+
+            messages.Add(new JsonObject
+            {
+                ["role"] = "tool",
+                ["tool_name"] = result.ToolName,
+                ["content"] = modelResult
+            });
+
+            _logger.LogInformation(
+                "Daily-plan data tool completed. Tool={ToolName}, ResultCharacters={ResultCharacters}.",
+                result.ToolName,
+                result.ResultJson.Length);
+        }
+
+        return HasEligibleDailyPlanEvent(profileResult, results[1].ResultJson);
+    }
+
+    private async Task<string> ExecuteToolAsync(
+        string toolName,
+        JsonObject arguments,
+        CancellationToken cancellationToken)
+    {
+        var toolCall = new JsonObject
+        {
+            ["function"] = new JsonObject
+            {
+                ["name"] = toolName,
+                ["arguments"] = JsonNode.Parse(arguments.ToJsonString())
+            }
+        };
+
+        using var document = JsonDocument.Parse(toolCall.ToJsonString());
+
+        return await ExecuteToolCallAsync(
+            document.RootElement,
+            cancellationToken);
+    }
+
+    private static DateOnly GetDailyPlanDate(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        var userMessages = string.Join(
+            " ",
+            conversation
+                .Where(message => string.Equals(
+                    message.Role,
+                    "user",
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(message => message.Content ?? string.Empty));
+
+        var dates = Regex.Matches(userMessages, @"\b\d{4}-\d{2}-\d{2}\b");
+        if (dates.Count > 0)
+        {
+            var requestedDate = dates[dates.Count - 1].Value;
+            if (DateOnly.TryParseExact(
+                    requestedDate,
+                    "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var parsedDate))
+            {
+                return parsedDate;
+            }
+
+            throw new ArgumentException(
+                "The daily plan date must use YYYY-MM-DD format.");
+        }
+
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
+            OperatingSystem.IsWindows()
+                ? "Central Europe Standard Time"
+                : "Europe/Budapest");
+
+        return DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone).DateTime);
+    }
+
+    private static string? GetProfileTimeZone(string profileResult)
+    {
+        using var document = JsonDocument.Parse(profileResult);
+        var root = document.RootElement;
+
+        return root.TryGetProperty("success", out var success) &&
+               success.ValueKind == JsonValueKind.True
+            ? GetString(root, "timeZone")
+            : null;
+    }
+
+    private static bool HasEligibleDailyPlanEvent(
+        string profileResult,
+        string calendarResult)
+    {
+        using var profileDocument = JsonDocument.Parse(profileResult);
+        var profile = profileDocument.RootElement;
+
+        if (!profile.TryGetProperty("success", out var profileSuccess) ||
+            profileSuccess.ValueKind != JsonValueKind.True ||
+            string.IsNullOrWhiteSpace(GetString(profile, "homeLocation")))
+        {
+            return false;
+        }
+
+        using var calendarDocument = JsonDocument.Parse(calendarResult);
+        var calendar = calendarDocument.RootElement;
+
+        if (!calendar.TryGetProperty("success", out var calendarSuccess) ||
+            calendarSuccess.ValueKind != JsonValueKind.True ||
+            !calendar.TryGetProperty("events", out var events) ||
+            events.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(
+            OperatingSystem.IsWindows()
+                ? "Central Europe Standard Time"
+                : "Europe/Budapest");
+        var localNow = TimeZoneInfo.ConvertTime(
+            DateTimeOffset.UtcNow,
+            timeZone).DateTime;
+
+        return events.EnumerateArray().Any(calendarEvent =>
+            !(calendarEvent.TryGetProperty("isAllDay", out var allDay) &&
+              allDay.ValueKind == JsonValueKind.True) &&
+            calendarEvent.TryGetProperty(
+                "timeRangeValid",
+                out var validRange) &&
+            validRange.ValueKind == JsonValueKind.True &&
+            !string.IsNullOrWhiteSpace(GetString(calendarEvent, "location")) &&
+            DateTime.TryParseExact(
+                GetString(calendarEvent, "localStart"),
+                "yyyy-MM-dd'T'HH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var eventStart) &&
+            eventStart > localNow);
     }
 
     private async Task<string> ExecuteToolCallAsync(
@@ -279,6 +615,16 @@ public sealed class OllamaAgentService
             _logger.LogInformation(
                 "Executing AI tool: {ToolName}",
                 name);
+
+            if (string.Equals(
+                    name,
+                    "search_bus_journeys",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation(
+                    "Ollama bus-search arguments: {Arguments}",
+                    arguments.GetRawText());
+            }
 
             var result = await tool.ExecuteAsync(
                 argumentsDocument.RootElement,
@@ -329,7 +675,9 @@ public sealed class OllamaAgentService
                 ["top_p"] = 0.8,
                 ["top_k"] = 20,
                 ["num_ctx"] = 6144,
-                ["num_predict"] = 256
+                // Tool selection may require several arguments and can be
+                // truncated when the model has to inspect calendar/profile data.
+                ["num_predict"] = 512
             }
         };
 
@@ -496,7 +844,8 @@ public sealed class OllamaAgentService
     private string BuildSystemPrompt(
         string? selectedTripContext,
         IReadOnlyCollection<string> activeSkillNames,
-        bool isTravelRequest)
+        bool isTravelRequest,
+        bool dailyPlanDataPrefetched)
     {
         var timezone = TimeZoneInfo.FindSystemTimeZoneById(
             OperatingSystem.IsWindows()
@@ -510,12 +859,16 @@ public sealed class OllamaAgentService
             ? """
               UTAZÁSI SZABÁLYOK:
               - A teljes beszélgetésből őrizd meg az előzőleg megadott indulási és céltelepülést.
-              - A legutóbbi felhasználói pontosítás felülírja a korábbi értéket.
-              - "Most szeretnék indulni" = searchMode "departAfter", departureTime "now", travelDate a mai dátum.
-              - Ha minden kötelező adat ismert, azonnal hívd meg a search_bus_journeys eszközt.
+              - A legutóbbi felhasználói pontosítás csak az általa módosított adatot írja felül; a korábbi indulási helyet, dátumot és időzítési szándékot őrizd meg.
+              - Ha a felhasználó csak a célállomást módosítja (például: "inkább Balatonfüredre"), tartsd meg a korábbi indulási helyet és a korábbi időzítési szándékot.
+              - "Most szeretnék indulni", "azonnal indulnék" vagy "minél előbb" = searchMode "departAfter", departureTime "now", travelDate a mai dátum.
+              - A "now" értéket soha ne helyettesítsd korábbi üzenetből származó fix idővel.
+              - Ha minden kötelező adat ismert, minden utazási kérésnél kötelező meghívni a search_bus_journeys eszközt, még akkor is, ha csak a célállomás változott.
               - Tilos azt írnod, hogy "keresem a járatokat" vagy "várj", ha nem hívtad meg az eszközt.
               - Ha egy szükséges adat hiányzik, csak azt az egy adatot kérdezd meg.
               - Ne találj ki járatot vagy menetrendi adatot.
+              - Járatszámot, indulási/érkezési időt, átszállást, menetidőt vagy útvonalat kizárólag a search_bus_journeys eszköz tényleges eredményéből közölhetsz.
+              - Ha az eszköz nem futott le, ne adj meg útvonalat vagy időpontot; kérj pontosítást, vagy jelezd, hogy a keresés nem futott le.
               """
             : string.Empty;
 
@@ -523,10 +876,28 @@ public sealed class OllamaAgentService
             "DailyPlanningSkill",
             StringComparer.OrdinalIgnoreCase)
             ? """
-              NAPTÁRI ADATOK:
+              NAPTÁRI ÉS NAPI TERVEZÉSI SZABÁLYOK:
               - Google Calendar eseményt kizárólag a get_calendar_events eszköz eredményéből jeleníthetsz meg.
+              - Napi terv készítésekor kérd le a felhasználói profilt is; a homeLocation az indulási település, a preparationMinutes a felkészülési idő.
+              - Ha egy eseménynek van helyszíne és a homeLocation ismert, keress hozzá buszútvonalat a search_bus_journeys eszközzel.
+              - A buszkereséshez az esemény helyi kezdési dátumát és időpontját használd, searchMode = "arriveBy" értékkel.
+              - Ne keress útvonalat egész napos eseményhez, hiányzó helyszínhez vagy érvénytelen esemény-időintervallumhoz.
+              - A busz indulási idejét, érkezési idejét, járatszámát és átszállásait kizárólag a keresőeszköz eredményéből vedd át.
+              - A preparationMinutes értéket a busz indulási ideje előtti felkészülési időként kezeld. A felkészülés kezdete = járat indulása mínusz preparationMinutes.
+              - Ne becsülj gyaloglási vagy megállóhoz jutási időt; ha ilyen adat nincs, jelezd, hogy ez nincs beleszámítva.
+              - Ha nincs megfelelő buszjárat, ezt egyértelműen jelezd; ne találj ki alternatívát.
+              - Ne állítsd, hogy egy útvonalat ellenőriztél, ha nem hívtad meg a search_bus_journeys eszközt.
+              - Ne jeleníts meg olyan járatot, amely nem szerepel az eszköz eredményében.
               - Ne találj ki eseményt, időpontot vagy helyszínt.
               - A naptár üres időszaka nem bizonyítja, hogy a felhasználó szabad.
+              """
+            : string.Empty;
+
+        var prefetchedDataRules = dailyPlanDataPrefetched
+            ? """
+              A napi tervhez szükséges naptári, időjárási és profiladatokat a szerver már lekérte.
+              A hozzájuk tartozó eszközeredmények közvetlenül az előzményben találhatók.
+              Ezeket használd; ne állítsd, hogy nem érkezett adat, és ne kérdezd le őket újra.
               """
             : string.Empty;
 
@@ -548,6 +919,7 @@ public sealed class OllamaAgentService
 
         {travelRules}
         {calendarRules}
+        {prefetchedDataRules}
         {selectedTripContext}
         """;
     }
@@ -555,17 +927,18 @@ public sealed class OllamaAgentService
     private ActiveAgentContext DetermineActiveContext(
         IReadOnlyList<AiChatMessageRequest> conversation)
     {
+        // Classify intent from user messages only. Assistant responses may
+        // mention calendars, weather, buses, or travel rules and must not
+        // activate unrelated skills on their own.
         var contextText = string.Join(
             " ",
-            conversation.TakeLast(6)
-                .Where(message => message.Role is "user" or "assistant")
+            conversation
+                .Where(message => string.Equals(
+                    message.Role,
+                    "user",
+                    StringComparison.OrdinalIgnoreCase))
+                .TakeLast(6)
                 .Select(message => message.Content ?? string.Empty));
-
-        var isTravelRequest = ContainsAny(
-            contextText,
-            "utaz", "eljut", "jutni", "szeretnék jutni", "szeretnék menni",
-            "menni", "járat", "busz", "vonat", "menetrend", "indul",
-            "érkez", "átszáll", "állomás");
 
         var isRealtimeRequest = ContainsAny(
             contextText,
@@ -573,7 +946,18 @@ public sealed class OllamaAgentService
 
         var isDailyPlanningRequest = ContainsAny(
             contextText,
-            "napi terv", "mai nap", "programom", "naptár", "időjárás", "eseményeim");
+            "napi terv", "napi tervez", "tervezd meg", "napomat", "napom", "holnapom",
+            "mai nap", "programom", "naptár", "időjárás", "eseményeim",
+            "napi beosztás", "mit csináljak holnap", "mit csináljak ma");
+
+        // Daily-plan prompts can mention bus searches conditionally. Do not
+        // treat those instructions as a standalone travel request, which
+        // would force a bus search even when no calendar event needs one.
+        var isTravelRequest = !isDailyPlanningRequest && ContainsAny(
+            contextText,
+            "utaz", "eljut", "jutni", "szeretnék jutni", "szeretnék menni",
+            "menni", "járat", "busz", "vonat", "menetrend", "indul",
+            "érkez", "átszáll", "állomás");
 
         if (!isTravelRequest && !isRealtimeRequest && !isDailyPlanningRequest)
         {
@@ -606,6 +990,7 @@ public sealed class OllamaAgentService
             toolNames.Add("get_calendar_events");
             toolNames.Add("get_weather_forecast");
             toolNames.Add("get_user_profile");
+            toolNames.Add("search_bus_journeys");
         }
 
         return new ActiveAgentContext(

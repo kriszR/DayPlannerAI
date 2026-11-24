@@ -28,8 +28,10 @@ public sealed class TravelPlanningSkill : IAgentSkill
         - Konkrét érkezési határidő esetén searchMode = "arriveBy".
         - Ha az indulási hely hiányzik, hívd meg a get_user_profile eszközt,
           és a homeLocation mezőből vedd át a települést. Ha nem egyértelmű,
-          kérdezz vissza.
-        - Ha a célállomás hiányzik, kérdezz vissza.
+          pontosan ezt a kérdést tedd fel: "Honnan szeretnél indulni?" Ne használd a "Hol szeretnél indulni?" változatot.
+        - Ha a célállomás hiányzik, röviden és természetesen kérdezz vissza.
+        - Visszakérdezéskor ne magyarázd a belső gondolkodásodat, és ne írd le,
+          hogy "meg kell kérdeznem", "mivel nem adtad meg" vagy hasonló fordulatokat.
         - Ha minden szükséges adat rendelkezésre áll, AZONNAL hívd meg a
           search_bus_journeys eszközt. Ne küldj előzetes olyan üzenetet,
           hogy "keresem a járatokat" vagy "kérlek, várj".
