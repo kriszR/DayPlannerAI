@@ -91,25 +91,66 @@ public sealed class GetCalendarEventsTool : IAgentTool
             if (string.IsNullOrWhiteSpace(startText))
                 continue;
 
+
             var start = ParseLocalDateTime(startText, timeZone);
 
             if (start is null)
                 continue;
 
             var end = string.IsNullOrWhiteSpace(endText)
-                ? start.Value
-                : ParseLocalDateTime(endText, timeZone) ?? start.Value;
+                ? null
+                : ParseLocalDateTime(endText, timeZone);
 
-            // Include events that overlap the requested local calendar day.
-            var overlapsRequestedDay =
-                start.Value < dayEnd &&
-                end >= dayStart;
+            var isAllDay =
+                calendarEvent.TryGetProperty("isAllDay", out var allDayElement) &&
+                allDayElement.ValueKind == JsonValueKind.True;
+
+            // Validate the event interval in the user's local timezone.
+            var timeRangeValid =
+                end.HasValue &&
+                end.Value >= start.Value;
+
+            int? durationMinutes = null;
+
+            if (!isAllDay && timeRangeValid)
+            {
+                durationMinutes = (int)(
+                    end!.Value - start.Value).TotalMinutes;
+            }
+
+            // Treat event intervals as half-open: [start, end).
+            // Keep malformed events that start on the requested day
+            // so that they can be reported instead of silently discarded.
+            var overlapsRequestedDay = timeRangeValid
+                ? start.Value < dayEnd && end!.Value > dayStart
+                : start.Value >= dayStart && start.Value < dayEnd;
 
             if (!overlapsRequestedDay)
                 continue;
 
-            filteredEvents.Add(
-                JsonNode.Parse(calendarEvent.GetRawText()));
+            var eventNode = JsonNode.Parse(
+                calendarEvent.GetRawText()) as JsonObject;
+
+            if (eventNode is null)
+                continue;
+
+            // Preserve original Google Calendar data and add validated fields.
+            eventNode["localStart"] = start.Value.ToString(
+                "yyyy-MM-ddTHH:mm",
+                CultureInfo.InvariantCulture);
+
+            eventNode["localEnd"] = end?.ToString(
+                "yyyy-MM-ddTHH:mm",
+                CultureInfo.InvariantCulture);
+
+            eventNode["timeRangeValid"] = timeRangeValid;
+
+            eventNode["durationMinutes"] = durationMinutes is null
+                ? null
+                : JsonValue.Create(durationMinutes.Value);
+
+            filteredEvents.Add(eventNode);
+
         }
 
         return JsonSerializer.Serialize(
@@ -178,7 +219,19 @@ public sealed class GetCalendarEventsTool : IAgentTool
             {
                 result.AppendLine(
                     $"Naptári időablak: {FormatEventTime(start)} – {FormatEventTime(end)}");
+                if (!isAllDay &&
+calendarEvent.TryGetProperty(
+    "timeRangeValid", out var validRange) &&
+validRange.ValueKind == JsonValueKind.True &&
+calendarEvent.TryGetProperty(
+    "durationMinutes", out var duration))
+                {
+                    result.AppendLine(
+                        $"Időtartam: {duration.GetInt32()} perc");
+                }
             }
+
+
 
             var location = GetString(calendarEvent, "location");
 

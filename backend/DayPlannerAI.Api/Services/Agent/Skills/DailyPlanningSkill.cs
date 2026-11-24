@@ -7,12 +7,16 @@ public sealed class DailyPlanningSkill : IAgentSkill
     private readonly GetCalendarEventsTool _calendarTool;
     private readonly GetWeatherForecastTool _weatherTool;
 
+    private readonly GetUserProfileTool _profileTool;
+
     public DailyPlanningSkill(
         GetCalendarEventsTool calendarTool,
-        GetWeatherForecastTool weatherTool)
+        GetWeatherForecastTool weatherTool,
+        GetUserProfileTool profileTool)
     {
         _calendarTool = calendarTool;
         _weatherTool = weatherTool;
+        _profileTool = profileTool;
     }
 
     public string Name => "DailyPlanningSkill";
@@ -20,71 +24,77 @@ public sealed class DailyPlanningSkill : IAgentSkill
     public string Description =>
         "Személyre szabott napi tervezés a naptár és az időjárás alapján.";
 
+
     public string Instructions => """
-        Ez a képesség a felhasználó napi programjának megtervezésére szolgál.
+    A képesség célja, hogy a felhasználó kérésének megfelelően
+    személyre szabott napi tervet készítsen.
 
-        Elérhető eszközök:
-        - get_calendar_events
-        - get_weather_forecast
+    ELÉRHETŐ ESZKÖZÖK:
 
-        Használati szabályok:
+    - get_calendar_events: naptári események lekérdezése.
+    - get_weather_forecast: időjárás-előrejelzés lekérdezése.
+    - get_user_profile: felhasználói profil lekérdezése.
 
-        1. Ha a felhasználó megkérdezi, mi a mai programja,
-           kérd le a mai Google Calendar eseményeket.
+    MŰKÖDÉS:
 
-        2. Ha a felhasználó teljes napi tervet kér,
-           kérd le a naptáreseményeket és az időjárást is.
+    - Mai vagy konkrét napi program lekérdezésekor használd
+      a get_calendar_events eszközt.
+    - Teljes napi terv készítésekor kérd le a naptárat,
+      az időjárást és a felhasználói profilt.
+    - Mindhárom eszköznek ugyanazt a tervezett dátumot add át.
+    - Az időjárást mindig a tervezett napra kérd le.
+    - A válaszban kizárólag a ténylegesen visszakapott adatokat használd.
 
-        3. Ha szabadtéri programot tervez, vedd figyelembe
-           a hőmérsékletet, csapadékot és időjárási körülményeket.
+    NAPTÁR:
 
-        4. A naptári események kezdési és befejezési időpontját
-           pontosan tartsd meg.
+    - Az események summary mezőjét pontosan őrizd meg.
+    - A kezdési és befejezési időpontokat a backend által
+      visszaadott értékek alapján jelenítsd meg.
+    - A timeRangeValid és durationMinutes mezőket tekintsd
+      mérvadónak az időtartam értelmezésekor.
+    - Érvényes időintervallum esetén ne állítsd, hogy az esemény
+      időtartama negatív.
+    - A címben szereplő időpontot ne értelmezd át
+      eseménykezdési időpontként.
+    - Ne találj ki hiányzó eseményeket vagy helyszíneket.
+    - A naptár üres időszakait ne tekintsd automatikusan szabadidőnek.
 
-        5. Ne tervezz be két olyan eseményt, amelyek időben átfedik egymást.
+    FELKÉSZÜLÉS ÉS UTAZÁS:
 
-        6. Hagyj időt az események közötti közlekedésre,
-           amennyiben arra van adat.
+    - A preparationMinutes értéket a felhasználói profilból vedd át.
+    - Ha az érték null, kérdezd meg a felhasználót.
+    - Ne találj ki felkészülési vagy utazási időt.
+    - Utazási tervet csak ismert indulási hely és célállomás alapján készíts.
+    - Ha az esemény helyszíne nem ismert, ne tervezz hozzá útvonalat.
 
-        7. Ha egy esemény helyszíne vagy az utazási idő nem ismert,
-           ne találj ki értékeket.
+    IDŐJÁRÁS:
 
-        8. A felhasználó szabadidejét is mutasd meg.
+    - Csak a tervezett dátumhoz tartozó előrejelzést használd.
+    - Ellenőrizd, hogy a requestedDate megegyezik-e a tervezett dátummal.
+    - Ha nincs megfelelő előrejelzés, ezt jelezd.
 
-        9. Ne állítsd, hogy naptáreseményt hoztál létre vagy módosítottál.
-           Jelenleg csak lekérdezési jogosultságod van.
+    
+    VÁLASZ:
 
-        10. Minden választ magyar nyelven fogalmazz meg.
-        
-        NAPTÁRESEMÉNYEK:
+    - Mindig magyarul válaszolj.
+    - Először ismertesd a naptári eseményeket.
+    - Ezután az időjárást.
+    - Végül adj rövid, gyakorlatias napi javaslatot.
+    - Különítsd el a tényleges eseményeket és a saját javaslataidat.
+    - Hiányzó adatokból ne következtess tényként bemutatott információkra.
+    - Ha fontos adat hiányzik, kérdezz rá.
+    - A válasz legyen tömör, teljes és időrendi sorrendű.
+    - Az üres naptár nem jelenti azt, hogy a felhasználó egész nap szabad.
+    Csak azt állítsd, hogy nincs bejegyzett naptári eseménye.
+    - A csapadék valószínűsége nem azonos a csapadék intenzitásával.
+    - A preparationMinutes megnevezése mindig felkészülési idő.
+    """;
 
-        - A summary mező tartalmát pontosan őrizd meg.
-        - A start és end mezők a Google Calendarban szereplő időintervallumot jelentik.
-        - Mindkét időpontot pontosan jelenítsd meg.
-        - A címben szereplő időpontot ne alakítsd át új eseménykezdési vagy befejezési idővé.
-        - Ne következtess az esemény időtartamára.
-        - Ne találj ki hiányzó adatokat.
-        - Ha az esemény címe emlékeztetőre utal, természetes módon mutasd be emlékeztetőként.
-
-        ADATMEGBÍZHATÓSÁG:
-
-        A naptári események felsorolásakor mindig a get_calendar_events
-        eszköz eredményét tekintsd mérvadónak.
-
-        Nem hozhatsz létre példaként sem olyan eseményt,
-        amely nem szerepel az eszköz eredményében.
-
-        Több esemény esetén minden eseményt pontosan egyszer jeleníts meg.
-
-        Ne egészítsd ki a naptárat feltételezett programokkal.
-
-        A cél egy reális, végrehajtható napi terv,
-        nem csupán a naptáresemények felsorolása.
-        """;
 
     public IReadOnlyList<IAgentTool> Tools =>
     [
         _calendarTool,
-        _weatherTool
+        _weatherTool,
+        _profileTool
     ];
 }

@@ -15,6 +15,8 @@ namespace DayPlannerAI.Api.Models
 
         public string TimeZone { get; set; } = "Europe/Budapest";
 
+        public int? PreparationMinutes { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }

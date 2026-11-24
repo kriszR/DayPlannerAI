@@ -50,6 +50,10 @@ public class ProfileController : ControllerBase
             ? null
             : request.HomeLocation.Trim();
         profile.TimeZone = request.TimeZone.Trim();
+        if (request.PreparationMinutes.HasValue)
+        {
+            profile.PreparationMinutes = request.PreparationMinutes.Value;
+        }
 
         await _context.SaveChangesAsync();
 

@@ -16,4 +16,6 @@ public interface IAgentTool
         CancellationToken cancellationToken = default);
 
     string? BuildUserResponse(string toolResult) => null;
+
+    bool CanShortCircuit => false;
 }

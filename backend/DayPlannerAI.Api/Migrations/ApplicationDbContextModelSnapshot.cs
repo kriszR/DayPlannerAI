@@ -324,6 +324,9 @@ namespace DayPlannerAI.Api.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<int?>("PreparationMinutes")
+                        .HasColumnType("integer");
+
                     b.Property<string>("TimeZone")
                         .IsRequired()
                         .HasMaxLength(100)

@@ -18,5 +18,8 @@ namespace DayPlannerAI.Api.DTOs
         [Required]
         [StringLength(100)]
         public string TimeZone { get; set; } = "Europe/Budapest";
+
+        [Range(0, 180)]
+        public int? PreparationMinutes { get; set; }
     }
 }

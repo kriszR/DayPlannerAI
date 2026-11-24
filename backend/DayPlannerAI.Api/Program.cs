@@ -50,6 +50,7 @@ builder.Services.AddScoped<GetWeatherForecastTool>();
 
 builder.Services.AddScoped<IAgentSkill, DailyPlanningSkill>();
 
+builder.Services.AddScoped<GetUserProfileTool>();
 // Http clients
 
 builder.Services.AddHttpClient();

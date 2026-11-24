@@ -13,6 +13,8 @@ public sealed class GetTripRealtimeTool : IAgentTool
     private readonly ApplicationDbContext _dbContext;
     private readonly GtfsRealtimeService _realtimeService;
 
+    public bool CanShortCircuit => true;
+
     public GetTripRealtimeTool(
         ApplicationDbContext dbContext,
         GtfsRealtimeService realtimeService)

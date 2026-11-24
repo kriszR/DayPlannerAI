@@ -9,6 +9,8 @@ namespace DayPlannerAI.Api.Services;
 
 public sealed class GtfsRouteSearchService
 {
+    private const int MinimumTransferSeconds = 10 * 60;
+
     private readonly ApplicationDbContext _dbContext;
 
     public GtfsRouteSearchService(ApplicationDbContext dbContext)
@@ -85,6 +87,8 @@ public sealed class GtfsRouteSearchService
 
         var arrivalCutoffSeconds =
             (int)arriveBy.ToTimeSpan().TotalSeconds;
+        var earliestDepartureSeconds =
+            GetEarliestDepartureSeconds(travelDate);
 
         var rawResults = await (
             from departure in _dbContext.GtfsStopTimes.AsNoTracking()
@@ -115,7 +119,8 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
-                  && arrivalSeconds.Value >= departureSeconds.Value
+                  && departureSeconds.Value > earliestDepartureSeconds
+                  && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value <= arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
                   && (
@@ -393,8 +398,16 @@ public sealed class GtfsRouteSearchService
             activeServiceIds,
             cancellationToken);
 
+        if (departureStops.Intersect(destinationStops).Any())
+        {
+            throw new InvalidOperationException(
+                "Departure and destination resolve to the same stops.");
+        }
+
         var arrivalCutoffSeconds =
             (int)arriveBy.ToTimeSpan().TotalSeconds;
+        var earliestDepartureSeconds =
+            GetEarliestDepartureSeconds(travelDate);
 
         // Find all possible first journey legs from the departure city.
         var firstLegs = await (
@@ -425,6 +438,7 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
+                  && departureSeconds.Value > earliestDepartureSeconds
                   && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value < arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
@@ -630,6 +644,10 @@ public sealed class GtfsRouteSearchService
                 var waitingSeconds =
                     second.DepartureSeconds - first.ArrivalSeconds;
 
+                // Require at least ten minutes to complete the transfer.
+                if (waitingSeconds < MinimumTransferSeconds)
+                    continue;
+
                 if (second.ArrivalSeconds > arrivalCutoffSeconds)
                     continue;
 
@@ -664,8 +682,11 @@ public sealed class GtfsRouteSearchService
         }
 
         return results
-            .OrderByDescending(x => x.ArrivalSeconds)
-            .ThenBy(x => x.Journey.TotalDurationMinutes)
+            // Prefer the shortest complete journey, using exact seconds.
+            .OrderBy(x => x.ArrivalSeconds - x.DepartureSeconds)
+            // If journey durations are equal, prefer the earlier arrival.
+            .ThenBy(x => x.ArrivalSeconds)
+            // If both are equal, prefer the later departure.
             .ThenByDescending(x => x.DepartureSeconds)
             .Take(Math.Clamp(limit, 1, 10))
             .Select(x => x.Journey)
@@ -793,8 +814,8 @@ public sealed class GtfsRouteSearchService
         )
         .ToListAsync(cancellationToken);
 
-        // Rank candidates using actual timetable coverage.
-        var bestCandidate = candidates
+        // Rank candidates using actual timetable coverage and station names.
+        var rankedCandidates = candidates
             .Select(candidate =>
             {
                 var calls = scheduledCalls
@@ -817,18 +838,34 @@ public sealed class GtfsRouteSearchService
                 };
             })
             .Where(candidate => candidate.TripCount > 0)
-            .OrderByDescending(candidate => candidate.RouteCount)
-            .ThenByDescending(candidate => candidate.TripCount)
-            .ThenByDescending(candidate => candidate.DepartureCount)
-            .ThenByDescending(candidate => candidate.NameRank)
-            .ThenBy(candidate => Normalize(candidate.Candidate.StopName))
-            .FirstOrDefault();
+            .ToList();
 
-        if (bestCandidate is null)
+        if (rankedCandidates.Count == 0)
         {
             throw new InvalidOperationException(
                 $"No active bus services were found for city: {city}");
         }
+
+        // If the feed identifies one or more actual bus terminals by name,
+        // include all of them instead of silently discarding every terminal
+        // except the one with the highest timetable count.
+        var namedBusStationStopIds = rankedCandidates
+            .Where(candidate => candidate.NameRank >= 2)
+            .SelectMany(candidate => candidate.Candidate.StopIds)
+            .Distinct()
+            .ToList();
+
+        if (namedBusStationStopIds.Count > 0)
+            return namedBusStationStopIds;
+
+        // Fallback for feeds that do not identify terminals explicitly.
+        var bestCandidate = rankedCandidates
+            .OrderByDescending(candidate => candidate.NameRank)
+            .ThenByDescending(candidate => candidate.RouteCount)
+            .ThenByDescending(candidate => candidate.TripCount)
+            .ThenByDescending(candidate => candidate.DepartureCount)
+            .ThenBy(candidate => Normalize(candidate.Candidate.StopName))
+            .First();
 
         return bestCandidate.Candidate.StopIds;
     }
@@ -879,6 +916,24 @@ public sealed class GtfsRouteSearchService
         }
 
         return activeServices;
+    }
+
+    private static int GetEarliestDepartureSeconds(DateOnly travelDate)
+    {
+        var timeZoneId = OperatingSystem.IsWindows()
+            ? "Central Europe Standard Time"
+            : "Europe/Budapest";
+
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone);
+        var today = DateOnly.FromDateTime(localNow.DateTime);
+
+        // Future service dates must not be restricted by the current clock time.
+        if (travelDate != today)
+            return -1;
+
+        // GTFS times are stored as whole seconds. Exclude departures at or before now.
+        return (int)Math.Floor(localNow.TimeOfDay.TotalSeconds);
     }
 
     private static string FormatGtfsTime(int seconds)

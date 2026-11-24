@@ -174,6 +174,23 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 throw new ArgumentException(
                     "Invalid arrival time. Expected HH:mm.");
             }
+            var localNow = GetBudapestNow();
+
+            var today = DateOnly.FromDateTime(localNow.DateTime);
+            var currentTime = TimeOnly.FromDateTime(localNow.DateTime);
+
+            if (travelDate < today)
+            {
+                throw new ArgumentException(
+                    "A kiválasztott utazási dátum már elmúlt.");
+            }
+
+            if (travelDate == today && arrivalTime <= currentTime)
+            {
+                throw new ArgumentException(
+                    "Az esemény kezdési időpontja már elmúlt. " +
+                    "Ehhez az eseményhez már nem lehet járatot keresni.");
+            }
 
             travelPlan.ArrivalTime = arrivalTime;
 
@@ -185,6 +202,16 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 limit: 5,
                 cancellationToken: cancellationToken);
 
+
+            if (travelDate == today)
+            {
+                routes = routes
+                    .Where(route => IsDepartureStillAvailable(
+                        route.DepartureTime,
+                        currentTime))
+                    .ToList();
+            }
+
             if (routes.Count == 0)
             {
                 journeys = await _routeSearchService
@@ -195,6 +222,15 @@ public sealed class SearchBusJourneysTool : IAgentTool
                         arrivalTime,
                         limit: 5,
                         cancellationToken: cancellationToken);
+
+                if (travelDate == today)
+                {
+                    journeys = journeys
+                        .Where(journey => IsDepartureStillAvailable(
+                            journey.DepartureTime,
+                            currentTime))
+                        .ToList();
+                }
             }
         }
         else
@@ -228,6 +264,18 @@ public sealed class SearchBusJourneysTool : IAgentTool
             ? value
             : throw new ArgumentException(
                 $"Missing required argument: {property}");
+    }
+
+    private static bool IsDepartureStillAvailable(
+    string departureTime,
+    TimeOnly currentTime)
+    {
+        return TimeOnly.TryParse(
+            departureTime,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out var parsedTime)
+            && parsedTime > currentTime;
     }
 
     private static string? GetOptionalString(

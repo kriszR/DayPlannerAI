@@ -114,6 +114,7 @@ public sealed class OllamaAgentService
             var directAnswers = new List<string>();
 
             var allToolsCanReturnDirectly = true;
+            var allToolsCanShortCircuit = true;
 
             foreach (var toolCall in toolCalls.EnumerateArray())
             {
@@ -129,6 +130,8 @@ public sealed class OllamaAgentService
 
                 if (_registry.TryGetTool(functionName, out var tool))
                 {
+                    allToolsCanShortCircuit &= tool.CanShortCircuit;
+
                     var directAnswer = tool.BuildUserResponse(toolResult);
 
                     if (!string.IsNullOrWhiteSpace(directAnswer))
@@ -143,10 +146,18 @@ public sealed class OllamaAgentService
                 else
                 {
                     allToolsCanReturnDirectly = false;
+                    allToolsCanShortCircuit = false;
                 }
                 var modelToolResult = BuildModelFacingToolResult(
                     functionName,
                     toolResult);
+
+                if (functionName == "get_weather_forecast")
+                {
+                    _logger.LogWarning(
+                        "WEATHER TOOL RESULT: {ToolResult}",
+                        toolResult);
+                }
                 _logger.LogInformation(
                 "Tool {ToolName}: original result {OriginalLength} chars, model result {ModelLength} chars.",
                 functionName,
@@ -163,7 +174,8 @@ public sealed class OllamaAgentService
             // Skip another LLM generation when every tool has produced
             // a complete, deterministic user-facing answer.
             if (allToolsCanReturnDirectly &&
-                directAnswers.Count == toolCalls.GetArrayLength())
+    allToolsCanShortCircuit &&
+    directAnswers.Count == toolCalls.GetArrayLength())
             {
                 return new AgentChatResult(
             string.Join(
@@ -285,8 +297,8 @@ public sealed class OllamaAgentService
                 ["temperature"] = 0.2,
                 ["top_p"] = 0.8,
                 ["top_k"] = 20,
-                ["num_ctx"] = 4096,
-                ["num_predict"] = 256
+                ["num_ctx"] = 6144,
+                ["num_predict"] = 512
             }
         };
 
@@ -318,6 +330,47 @@ public sealed class OllamaAgentService
         }
 
         var document = JsonDocument.Parse(responseBody);
+        var root = document.RootElement;
+
+        var content = root
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString() ?? string.Empty;
+
+        var doneReason = root.TryGetProperty("done_reason", out var reason)
+            ? reason.ToString()
+            : "not provided";
+
+        var evalCount = root.TryGetProperty("eval_count", out var eval)
+            ? eval.ToString()
+            : "not provided";
+
+        var thinkingLength = root
+            .GetProperty("message")
+            .TryGetProperty("thinking", out var thinking)
+                ? (thinking.GetString()?.Length ?? 0)
+                : 0;
+
+        var promptEvalCount = root.TryGetProperty(
+    "prompt_eval_count",
+    out var promptEval)
+        ? promptEval.ToString()
+        : "missing";
+
+        var numPredict = request["options"]?["num_predict"]?.ToString();
+        var numCtx = request["options"]?["num_ctx"]?.ToString();
+
+        _logger.LogWarning(
+            "OLLAMA DIAGNOSTICS: DoneReason={DoneReason}, " +
+            "PromptEvalCount={PromptEvalCount}, " +
+            "EvalCount={EvalCount}, NumPredict={NumPredict}, " +
+            "NumCtx={NumCtx}, ContentLength={ContentLength}",
+            doneReason,
+            promptEvalCount,
+            evalCount,
+            numPredict,
+            numCtx,
+            content.Length);
 
         if (document.RootElement.TryGetProperty(
                 "error",
@@ -390,18 +443,47 @@ public sealed class OllamaAgentService
     }
 
     private static string BuildModelFacingToolResult(
-        string toolName,
-        string toolResult)
+    string toolName,
+    string toolResult)
     {
         if (string.Equals(
-        toolName,
-        "get_calendar_events",
-        StringComparison.OrdinalIgnoreCase))
+                toolName,
+                "get_calendar_events",
+                StringComparison.OrdinalIgnoreCase))
         {
             using var doc = JsonDocument.Parse(toolResult);
 
             var r = doc.RootElement;
-            var events = r.GetProperty("events");
+
+            var success =
+                r.TryGetProperty("success", out var successElement) &&
+                successElement.ValueKind == JsonValueKind.True;
+
+            var result = new JsonObject
+            {
+                ["success"] = success,
+                ["source"] = "Google Calendar",
+                ["requestedDate"] = GetString(r, "requestedDate"),
+                ["timeZone"] = GetString(r, "timeZone")
+            };
+
+            if (!success)
+            {
+                result["error"] = GetString(r, "error")
+                    ?? "A naptári adatok lekérdezése sikertelen.";
+
+                return result.ToJsonString();
+            }
+
+            if (!r.TryGetProperty("events", out var events) ||
+                events.ValueKind != JsonValueKind.Array)
+            {
+                result["success"] = false;
+                result["error"] =
+                    "A naptári szolgáltatás nem adott vissza eseménylistát.";
+
+                return result.ToJsonString();
+            }
 
             var compactEvents = new JsonArray();
 
@@ -412,23 +494,67 @@ public sealed class OllamaAgentService
                     ["summary"] = GetString(item, "summary"),
                     ["start"] = GetString(item, "start"),
                     ["end"] = GetString(item, "end"),
+                    ["localStart"] = GetString(item, "localStart"),
+                    ["localEnd"] = GetString(item, "localEnd"),
+
+                    ["timeRangeValid"] =
+                        item.TryGetProperty(
+                            "timeRangeValid",
+                            out var timeRange) &&
+                        timeRange.ValueKind == JsonValueKind.True,
+
+                    ["durationMinutes"] =
+                        GetInt(item, "durationMinutes"),
+
                     ["location"] = GetString(item, "location"),
-                    ["isAllDay"] = item.TryGetProperty(
-                        "isAllDay", out var allDay) &&
+
+                    ["isAllDay"] =
+                        item.TryGetProperty(
+                            "isAllDay",
+                            out var allDay) &&
                         allDay.ValueKind == JsonValueKind.True
                 });
             }
 
+            result["eventCount"] = compactEvents.Count;
+            result["events"] = compactEvents;
+
+            result["instruction"] =
+                "A naptári események a Google Calendar tényleges adatai. " +
+                "Kizárólag ezeket az eseményeket jelenítheted meg. " +
+                "A summary mezőt pontosan őrizd meg. " +
+                "A localStart és localEnd mezőket használd a helyi időpontok " +
+                "megjelenítéséhez. " +
+                "Ha a timeRangeValid értéke true, az időintervallum érvényes, " +
+                "és a durationMinutes mező tartalmazza az időtartamot percekben. " +
+                "Ilyenkor tilos negatív időtartamot állítani. " +
+                "Ha az időintervallum nem érvényes, ne következtess " +
+                "az esemény időtartamára. " +
+                "Ne találj ki eseményeket, helyszíneket vagy időpontokat.";
+
+            return result.ToJsonString();
+        }
+
+        if (string.Equals(
+        toolName,
+        "get_user_profile",
+        StringComparison.OrdinalIgnoreCase))
+        {
+            using var profileDoc = JsonDocument.Parse(toolResult);
+
+            var profileRoot = profileDoc.RootElement;
+
             return new JsonObject
             {
-                ["success"] = true,
-                ["source"] = "Google Calendar",
-                ["requestedDate"] = GetString(r, "requestedDate"),
-                ["eventCount"] = events.GetArrayLength(),
-                ["events"] = compactEvents,
-                ["instruction"] =
-                    "Only these exact calendar events exist in this result. " +
-                    "Do not invent or add events."
+                ["success"] = profileRoot.GetProperty("success").GetBoolean(),
+                ["displayName"] = GetString(profileRoot, "displayName"),
+                ["homeLocation"] = GetString(profileRoot, "homeLocation"),
+                ["timeZone"] = GetString(profileRoot, "timeZone"),
+                ["preparationMinutes"] =
+                    profileRoot.TryGetProperty("preparationMinutes", out var minutes) &&
+                    minutes.ValueKind == JsonValueKind.Number
+                        ? minutes.GetInt32()
+                        : (int?)null
             }.ToJsonString();
         }
 
