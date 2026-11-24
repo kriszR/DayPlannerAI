@@ -17,7 +17,9 @@ public sealed class GetUserProfileTool : IAgentTool
 
     public string Description =>
         "Lekéri a felhasználói profilt, a lakóhelyet, az időzónát " +
-        "és a beállított felkészülési időt. Napi tervezéskor használd.";
+        "és a beállított felkészülési időt. Napi tervezéskor használd, " +
+        "utazástervezéskor pedig akkor, ha az indulási hely nincs megadva " +
+        "és ellenőrizni kell a felhasználó lakóhelyét.";
 
     public JsonObject Parameters => new()
     {

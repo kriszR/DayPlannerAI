@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DayPlannerAI.Api.DTOs;
@@ -79,6 +80,107 @@ public sealed class SearchBusJourneysTool : IAgentTool
         ["additionalProperties"] = false
     };
 
+    public bool CanShortCircuit => true;
+
+    public string? BuildUserResponse(string toolResult)
+    {
+        using var document = JsonDocument.Parse(toolResult);
+        var root = document.RootElement;
+
+        if (!root.TryGetProperty("success", out var success) ||
+            success.ValueKind != JsonValueKind.True)
+        {
+            var error = GetJsonString(root, "error");
+            return string.IsNullOrWhiteSpace(error)
+                ? "A buszjáratok keresése nem sikerült."
+                : $"A buszjáratok keresése nem sikerült: {error}";
+        }
+
+        var plan = root.GetProperty("travelPlan");
+        var departure = GetJsonString(plan, "departureLocation") ?? "az indulási hely";
+        var destination = GetJsonString(plan, "destination") ?? "a célállomás";
+        var date = GetJsonString(plan, "travelDate") ?? "a megadott napon";
+
+        var routes = root.TryGetProperty("availableRoutes", out var routeArray) &&
+                     routeArray.ValueKind == JsonValueKind.Array
+            ? routeArray
+            : default;
+
+        var journeys = root.TryGetProperty("availableJourneys", out var journeyArray) &&
+                       journeyArray.ValueKind == JsonValueKind.Array
+            ? journeyArray
+            : default;
+
+        var routeCount = routes.ValueKind == JsonValueKind.Array
+            ? routes.GetArrayLength()
+            : 0;
+        var journeyCount = journeys.ValueKind == JsonValueKind.Array
+            ? journeys.GetArrayLength()
+            : 0;
+
+        if (routeCount == 0 && journeyCount == 0)
+        {
+            var transferWasChecked =
+                root.TryGetProperty("transferSearchPerformed", out var transferElement) &&
+                transferElement.ValueKind == JsonValueKind.True;
+
+            return transferWasChecked
+                ? $"Nem találtam megfelelő buszjáratot {departure} és {destination} között {date} napjára, közvetlen és átszállásos kereséssel sem."
+                : $"Nem találtam közvetlen buszjáratot {departure} és {destination} között {date} napjára. Ebben a keresésben átszállásos útvonalat még nem ellenőriztem.";
+        }
+
+        var response = new StringBuilder();
+
+        if (routeCount > 0)
+        {
+            response.Append($"Találtam {routeCount} közvetlen buszjáratot {departure} és {destination} között {date} napjára.");
+
+            var firstRoute = routes[0];
+            var routeName = GetJsonString(firstRoute, "routeShortName")
+                ?? GetJsonString(firstRoute, "routeLongName");
+            var departureTime = GetJsonString(firstRoute, "departureTime");
+            var arrivalTime = GetJsonString(firstRoute, "arrivalTime");
+            var duration = firstRoute.TryGetProperty("durationMinutes", out var durationElement) &&
+                           durationElement.TryGetInt32(out var durationMinutes)
+                ? durationMinutes
+                : (int?)null;
+
+            if (!string.IsNullOrWhiteSpace(departureTime) &&
+                !string.IsNullOrWhiteSpace(arrivalTime))
+            {
+                response.Append($" Az első találat");
+
+                if (!string.IsNullOrWhiteSpace(routeName))
+                    response.Append($" ({routeName})");
+
+                response.Append($": {departureTime}–{arrivalTime}");
+
+                if (duration.HasValue)
+                    response.Append($", {duration.Value} perc");
+
+                response.Append('.');
+            }
+
+            response.Append(" A részleteket az alábbi járatkártyákon találod.");
+        }
+        else
+        {
+            response.Append($"Találtam {journeyCount} átszállásos útvonalat {departure} és {destination} között {date} napjára.");
+            response.Append(" A részleteket az alábbi útvonalkártyákon találod.");
+        }
+
+        return response.ToString();
+    }
+
+    private static string? GetJsonString(JsonElement element, string property)
+    {
+        return element.ValueKind == JsonValueKind.Object &&
+               element.TryGetProperty(property, out var value) &&
+               value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
     public async Task<string> ExecuteAsync(
         JsonElement arguments,
         CancellationToken cancellationToken = default)
@@ -117,12 +219,15 @@ public sealed class SearchBusJourneysTool : IAgentTool
 
         List<GtfsDirectRouteDto> routes = [];
         List<GtfsJourneyDto> journeys = [];
+        var transferSearchPerformed = false;
 
         if (searchMode == "departAfter")
         {
             var departureTimeText = GetOptionalString(
                 arguments, "departureTime");
 
+            var localNow = GetBudapestNow();
+            var today = DateOnly.FromDateTime(localNow.DateTime);
             TimeOnly departureTime;
 
             if (string.Equals(
@@ -131,11 +236,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
                     StringComparison.OrdinalIgnoreCase) ||
                 string.IsNullOrWhiteSpace(departureTimeText))
             {
-                var localNow = GetBudapestNow();
-
-                travelPlan.TravelDate =
-                    DateOnly.FromDateTime(localNow.DateTime);
-
+                travelPlan.TravelDate = today;
                 departureTime = TimeOnly.FromDateTime(localNow.DateTime);
             }
             else if (!TimeOnly.TryParseExact(
@@ -149,6 +250,12 @@ public sealed class SearchBusJourneysTool : IAgentTool
                     "Invalid departure time. Expected HH:mm or now.");
             }
 
+            if (travelPlan.TravelDate < today)
+            {
+                throw new ArgumentException(
+                    "A kiválasztott utazási dátum már elmúlt.");
+            }
+
             travelPlan.DepartureTime = departureTime;
 
             routes = await _routeSearchService.SearchDirectDeparturesAsync(
@@ -158,6 +265,21 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 departureTime,
                 limit: 5,
                 cancellationToken: cancellationToken);
+
+            // If no direct service exists, also look for a valid one-transfer
+            // journey that departs after the requested time.
+            if (routes.Count == 0)
+            {
+                transferSearchPerformed = true;
+                journeys = await _routeSearchService
+                    .SearchOneTransferRoutesAfterAsync(
+                        departureLocation,
+                        destination,
+                        travelPlan.TravelDate.Value,
+                        departureTime,
+                        limit: 5,
+                        cancellationToken: cancellationToken);
+            }
         }
         else if (searchMode == "arriveBy")
         {
@@ -203,17 +325,9 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 cancellationToken: cancellationToken);
 
 
-            if (travelDate == today)
-            {
-                routes = routes
-                    .Where(route => IsDepartureStillAvailable(
-                        route.DepartureTime,
-                        currentTime))
-                    .ToList();
-            }
-
             if (routes.Count == 0)
             {
+                transferSearchPerformed = true;
                 journeys = await _routeSearchService
                     .SearchOneTransferRoutesAsync(
                         departureLocation,
@@ -222,15 +336,6 @@ public sealed class SearchBusJourneysTool : IAgentTool
                         arrivalTime,
                         limit: 5,
                         cancellationToken: cancellationToken);
-
-                if (travelDate == today)
-                {
-                    journeys = journeys
-                        .Where(journey => IsDepartureStillAvailable(
-                            journey.DepartureTime,
-                            currentTime))
-                        .ToList();
-                }
             }
         }
         else
@@ -248,8 +353,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 availableJourneys = journeys,
                 resultCount = routes.Count + journeys.Count,
                 directRoutesFound = routes.Count > 0,
-                transferSearchPerformed =
-                    searchMode == "arriveBy" && routes.Count == 0
+                transferSearchPerformed
             },
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
@@ -264,18 +368,6 @@ public sealed class SearchBusJourneysTool : IAgentTool
             ? value
             : throw new ArgumentException(
                 $"Missing required argument: {property}");
-    }
-
-    private static bool IsDepartureStillAvailable(
-    string departureTime,
-    TimeOnly currentTime)
-    {
-        return TimeOnly.TryParse(
-            departureTime,
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.None,
-            out var parsedTime)
-            && parsedTime > currentTime;
     }
 
     private static string? GetOptionalString(

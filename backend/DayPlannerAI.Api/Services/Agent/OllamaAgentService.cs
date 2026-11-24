@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -47,15 +48,19 @@ public sealed class OllamaAgentService
         if (conversation.Count == 0)
             throw new ArgumentException("Conversation cannot be empty.");
 
+        var activeContext = DetermineActiveContext(conversation);
         var messages = new List<JsonObject>
-
-    {
-        new()
         {
-            ["role"] = "system",
-            ["content"] = BuildSystemPrompt(selectedTripContext)
-        }
-    };
+            new()
+            {
+                ["role"] = "system",
+                ["content"] = BuildSystemPrompt(
+                    selectedTripContext,
+                    activeContext.SkillNames,
+                    activeContext.IsTravelRequest)
+            }
+        };
+
         var executedToolResults = new List<AgentToolExecutionResult>();
 
         foreach (var message in conversation.TakeLast(6))
@@ -79,7 +84,9 @@ public sealed class OllamaAgentService
             using var document = await SendChatRequestAsync(
                 messages,
                 includeTools: true,
-                cancellationToken);
+                requestStage: $"tool-selection round {round + 1}",
+                cancellationToken,
+                activeContext.ToolNames);
 
             if (!document.RootElement.TryGetProperty(
                     "message",
@@ -99,15 +106,36 @@ public sealed class OllamaAgentService
 
             messages.Add(assistantNode);
 
-            if (!assistantMessage.TryGetProperty(
+            var hasToolCalls = assistantMessage.TryGetProperty(
                     "tool_calls",
-                    out var toolCalls) ||
-                toolCalls.ValueKind != JsonValueKind.Array ||
-                toolCalls.GetArrayLength() == 0)
+                    out var toolCalls) &&
+                toolCalls.ValueKind == JsonValueKind.Array &&
+                toolCalls.GetArrayLength() > 0;
+
+            _logger.LogInformation(
+                "Ollama decision. TravelRequest={TravelRequest}, Round={Round}, " +
+                "ToolCallCount={ToolCallCount}, ResponseCharacters={ResponseCharacters}.",
+                activeContext.IsTravelRequest,
+                round + 1,
+                hasToolCalls ? toolCalls.GetArrayLength() : 0,
+                GetMessageContent(assistantMessage).Length);
+
+            if (!hasToolCalls)
             {
+                if (activeContext.IsTravelRequest &&
+                    !executedToolResults.Any(x =>
+                        string.Equals(
+                            x.ToolName,
+                            "search_bus_journeys",
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogWarning(
+                        "Travel intent was detected, but Ollama did not call search_bus_journeys.");
+                }
+
                 return new AgentChatResult(
-    GetMessageContent(assistantMessage),
-    executedToolResults);
+                    GetMessageContent(assistantMessage),
+                    executedToolResults);
             }
 
             // Execute every requested tool sequentially.
@@ -193,6 +221,7 @@ public sealed class OllamaAgentService
         using var finalDocument = await SendChatRequestAsync(
             messages,
             includeTools: false,
+            requestStage: "final response",
             cancellationToken);
 
         if (finalDocument.RootElement.TryGetProperty(
@@ -281,7 +310,9 @@ public sealed class OllamaAgentService
     private async Task<JsonDocument> SendChatRequestAsync(
         List<JsonObject> messages,
         bool includeTools,
-        CancellationToken cancellationToken)
+        string requestStage,
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? toolNames = null)
     {
         var request = new JsonObject
         {
@@ -298,149 +329,302 @@ public sealed class OllamaAgentService
                 ["top_p"] = 0.8,
                 ["top_k"] = 20,
                 ["num_ctx"] = 6144,
-                ["num_predict"] = 512
+                ["num_predict"] = 256
             }
         };
 
         if (includeTools)
         {
             request["tools"] = JsonSerializer.SerializeToNode(
-                _registry.GetOllamaToolDefinitions(),
+                _registry.GetOllamaToolDefinitions(toolNames),
                 _jsonOptions);
         }
 
-        using var response = await _httpClient.PostAsJsonAsync(
-    "api/chat",
-    request,
-    _jsonOptions,
-    cancellationToken);
+        var promptCharacters = messages.Sum(
+            message => message.ToJsonString(_jsonOptions).Length);
+        var stopwatch = Stopwatch.StartNew();
 
-        var responseBody = await response.Content.ReadAsStringAsync(
-            cancellationToken);
+        _logger.LogInformation(
+            "Sending Ollama request. Stage={Stage}, Model={Model}, " +
+            "IncludeTools={IncludeTools}, MessageCount={MessageCount}, " +
+            "PromptCharacters={PromptCharacters}, ToolCount={ToolCount}.",
+            requestStage,
+            _model,
+            includeTools,
+            messages.Count,
+            promptCharacters,
+            includeTools
+                ? (toolNames is null
+                    ? _registry.Tools.Count
+                    : _registry.Tools.Count(tool => toolNames.Contains(
+                        tool.Name,
+                        StringComparer.OrdinalIgnoreCase)))
+                : 0);
 
-        if (!response.IsSuccessStatusCode)
+        HttpResponseMessage response;
+
+        try
         {
+            response = await _httpClient.PostAsJsonAsync(
+                "api/chat",
+                request,
+                _jsonOptions,
+                cancellationToken);
+        }
+        catch (TaskCanceledException exception)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
             _logger.LogError(
-                "Ollama returned HTTP {StatusCode}. Response: {ResponseBody}",
-                (int)response.StatusCode,
-                responseBody);
+                exception,
+                "Ollama request timed out. Stage={Stage}, Model={Model}, " +
+                "ElapsedSeconds={ElapsedSeconds}, MessageCount={MessageCount}, " +
+                "PromptCharacters={PromptCharacters}.",
+                requestStage,
+                _model,
+                stopwatch.Elapsed.TotalSeconds,
+                messages.Count,
+                promptCharacters);
 
-            throw new HttpRequestException(
-                $"Ollama API error ({(int)response.StatusCode}): {responseBody}");
+            throw;
         }
 
-        var document = JsonDocument.Parse(responseBody);
-        var root = document.RootElement;
-
-        var content = root
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString() ?? string.Empty;
-
-        var doneReason = root.TryGetProperty("done_reason", out var reason)
-            ? reason.ToString()
-            : "not provided";
-
-        var evalCount = root.TryGetProperty("eval_count", out var eval)
-            ? eval.ToString()
-            : "not provided";
-
-        var thinkingLength = root
-            .GetProperty("message")
-            .TryGetProperty("thinking", out var thinking)
-                ? (thinking.GetString()?.Length ?? 0)
-                : 0;
-
-        var promptEvalCount = root.TryGetProperty(
-    "prompt_eval_count",
-    out var promptEval)
-        ? promptEval.ToString()
-        : "missing";
-
-        var numPredict = request["options"]?["num_predict"]?.ToString();
-        var numCtx = request["options"]?["num_ctx"]?.ToString();
-
-        _logger.LogWarning(
-            "OLLAMA DIAGNOSTICS: DoneReason={DoneReason}, " +
-            "PromptEvalCount={PromptEvalCount}, " +
-            "EvalCount={EvalCount}, NumPredict={NumPredict}, " +
-            "NumCtx={NumCtx}, ContentLength={ContentLength}",
-            doneReason,
-            promptEvalCount,
-            evalCount,
-            numPredict,
-            numCtx,
-            content.Length);
-
-        if (document.RootElement.TryGetProperty(
-                "error",
-                out var error))
+        using (response)
         {
-            var message = error.GetString()
-                ?? "Unknown Ollama error.";
+            var responseBody = await response.Content.ReadAsStringAsync(
+                cancellationToken);
 
-            document.Dispose();
+            stopwatch.Stop();
 
-            throw new HttpRequestException(
-                $"Ollama API error: {message}");
+            _logger.LogInformation(
+                "Ollama request completed. Stage={Stage}, StatusCode={StatusCode}, " +
+                "ElapsedSeconds={ElapsedSeconds}, ResponseCharacters={ResponseCharacters}.",
+                requestStage,
+                (int)response.StatusCode,
+                stopwatch.Elapsed.TotalSeconds,
+                responseBody.Length);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogError(
+                    "Ollama returned HTTP {StatusCode}. Response: {ResponseBody}",
+                    (int)response.StatusCode,
+                    responseBody);
+
+                throw new HttpRequestException(
+                    $"Ollama API error ({(int)response.StatusCode}): {responseBody}");
+            }
+
+            var document = JsonDocument.Parse(responseBody);
+            var root = document.RootElement;
+
+            var content = root
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString() ?? string.Empty;
+
+            var doneReason = root.TryGetProperty("done_reason", out var reason)
+                ? reason.ToString()
+                : "not provided";
+
+            var evalCount = root.TryGetProperty("eval_count", out var eval)
+                ? eval.ToString()
+                : "not provided";
+
+            var promptEvalCount = root.TryGetProperty(
+                "prompt_eval_count",
+                out var promptEval)
+                    ? promptEval.ToString()
+                    : "missing";
+
+            var totalDurationNs = GetLong(root, "total_duration");
+            var loadDurationNs = GetLong(root, "load_duration");
+            var promptEvalDurationNs = GetLong(root, "prompt_eval_duration");
+            var evalDurationNs = GetLong(root, "eval_duration");
+
+            var numPredict = request["options"]?["num_predict"]?.ToString();
+            var numCtx = request["options"]?["num_ctx"]?.ToString();
+
+            _logger.LogInformation(
+                "OLLAMA DIAGNOSTICS: Stage={Stage}, DoneReason={DoneReason}, " +
+                "PromptEvalCount={PromptEvalCount}, EvalCount={EvalCount}, " +
+                "NumPredict={NumPredict}, NumCtx={NumCtx}, ContentLength={ContentLength}, " +
+                "TotalMs={TotalMs}, LoadMs={LoadMs}, PromptEvalMs={PromptEvalMs}, EvalMs={EvalMs}.",
+                requestStage,
+                doneReason,
+                promptEvalCount,
+                evalCount,
+                numPredict,
+                numCtx,
+                content.Length,
+                ToMilliseconds(totalDurationNs),
+                ToMilliseconds(loadDurationNs),
+                ToMilliseconds(promptEvalDurationNs),
+                ToMilliseconds(evalDurationNs));
+
+            if (root.TryGetProperty("error", out var error))
+            {
+                var message = error.GetString()
+                    ?? "Unknown Ollama error.";
+
+                document.Dispose();
+
+                throw new HttpRequestException(
+                    $"Ollama API error: {message}");
+            }
+
+            return document;
         }
-
-        return document;
     }
 
-    private string BuildSystemPrompt(string? selectedTripContext)
+    private static long? GetLong(JsonElement element, string property)
+    {
+        return element.TryGetProperty(property, out var value) &&
+               value.TryGetInt64(out var result)
+            ? result
+            : null;
+    }
+
+    private static double? ToMilliseconds(long? nanoseconds)
+    {
+        return nanoseconds.HasValue
+            ? nanoseconds.Value / 1_000_000d
+            : null;
+    }
+
+    private string BuildSystemPrompt(
+        string? selectedTripContext,
+        IReadOnlyCollection<string> activeSkillNames,
+        bool isTravelRequest)
     {
         var timezone = TimeZoneInfo.FindSystemTimeZoneById(
             OperatingSystem.IsWindows()
                 ? "Central Europe Standard Time"
                 : "Europe/Budapest");
 
-        var now = TimeZoneInfo.ConvertTime(
-            DateTimeOffset.UtcNow,
-            timezone);
+        var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timezone);
+        var skillInstructions = _registry.BuildSkillInstructions(activeSkillNames);
+
+        var travelRules = isTravelRequest
+            ? """
+              UTAZÁSI SZABÁLYOK:
+              - A teljes beszélgetésből őrizd meg az előzőleg megadott indulási és céltelepülést.
+              - A legutóbbi felhasználói pontosítás felülírja a korábbi értéket.
+              - "Most szeretnék indulni" = searchMode "departAfter", departureTime "now", travelDate a mai dátum.
+              - Ha minden kötelező adat ismert, azonnal hívd meg a search_bus_journeys eszközt.
+              - Tilos azt írnod, hogy "keresem a járatokat" vagy "várj", ha nem hívtad meg az eszközt.
+              - Ha egy szükséges adat hiányzik, csak azt az egy adatot kérdezd meg.
+              - Ne találj ki járatot vagy menetrendi adatot.
+              """
+            : string.Empty;
+
+        var calendarRules = activeSkillNames.Contains(
+            "DailyPlanningSkill",
+            StringComparer.OrdinalIgnoreCase)
+            ? """
+              NAPTÁRI ADATOK:
+              - Google Calendar eseményt kizárólag a get_calendar_events eszköz eredményéből jeleníthetsz meg.
+              - Ne találj ki eseményt, időpontot vagy helyszínt.
+              - A naptár üres időszaka nem bizonyítja, hogy a felhasználó szabad.
+              """
+            : string.Empty;
 
         return $"""
-        Te a DayPlannerAI személyi AI-asszisztense vagy.
+        Te a DayPlannerAI személyi AI-asszisztense vagy. Mindig magyarul válaszolj.
 
-        AKTUÁLIS IDŐ:
-        {now:yyyy-MM-dd HH:mm:ss}
+        Aktuális budapesti dátum és idő: {now:yyyy-MM-dd HH:mm:ss}
+        Időzóna: Europe/Budapest
 
-        IDŐZÓNA:
-        Europe/Budapest
+        Az ebben a kérésben aktív képességek és eszközök:
+        {skillInstructions}
 
-        A felhasználóval mindig magyarul kommunikálj.
-
-        Az elérhető képességeid:
-
-        {_registry.BuildSkillInstructions()}
-
-        Beszélgetési szabályok:
+        Általános szabályok:
         - Értelmezd a teljes beszélgetési előzményt.
-        - A legutóbbi, egyértelmű felhasználói pontosítás felülírja a korábbi értéket.
-        - Ha a felhasználó most akar indulni, használj aktuális budapesti időpontot.
-        - Ha utazást kér, használd a TravelPlanningSkill képességet.
-        - Ha valós idejű közlekedési adatot kér, használd a LiveTransitSkill képességet.
-        - Ne találj ki járatokat, időpontokat, GPS-adatokat.
-        - A Toolok tényleges eredményeire támaszkodj.
-        - Ha egy szükséges adat hiányzik, kérdezz vissza.
+        - A legutóbbi pontosítás felülírja a korábbi értéket.
+        - A Tool eredménye az egyetlen hiteles adatforrás.
+        - Ne állítsd, hogy végrehajtottál egy keresést, ha nem hívtad meg a megfelelő eszközt.
+        - Ha szükséges adat hiányzik, kérdezz vissza.
 
-        Minden felhasználói válasz magyar nyelvű legyen.
-
-        KRITIKUS ADATMEGBÍZHATÓSÁGI SZABÁLYOK:
-
-        - A Toolok eredményei a tények egyetlen hiteles forrásai.
-        - Soha ne találj ki Google Calendar eseményeket.
-        - Kizárólag a get_calendar_events által visszaadott
-        events tömbben szereplő eseményeket jelenítheted meg.
-        - Ha az events tömb üres, a naptárban nincs esemény.
-        - Ha egy esemény szerepel, nem egészítheted ki más eseményekkel.
-        - Nem találhatsz ki helyszínt, időpontot, résztvevőt vagy leírást.
-        - A summary, start és end mezőket különálló adatként kezeld.
-        - Ha a Tool nem adott vissza egy információt, jelezd, hogy nincs adat.
-
+        {travelRules}
+        {calendarRules}
         {selectedTripContext}
         """;
     }
+
+    private ActiveAgentContext DetermineActiveContext(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        var contextText = string.Join(
+            " ",
+            conversation.TakeLast(6)
+                .Where(message => message.Role is "user" or "assistant")
+                .Select(message => message.Content ?? string.Empty));
+
+        var isTravelRequest = ContainsAny(
+            contextText,
+            "utaz", "eljut", "jutni", "szeretnék jutni", "szeretnék menni",
+            "menni", "járat", "busz", "vonat", "menetrend", "indul",
+            "érkez", "átszáll", "állomás");
+
+        var isRealtimeRequest = ContainsAny(
+            contextText,
+            "gps", "valós idő", "hol jár", "késés", "késik", "járműpozíció");
+
+        var isDailyPlanningRequest = ContainsAny(
+            contextText,
+            "napi terv", "mai nap", "programom", "naptár", "időjárás", "eseményeim");
+
+        if (!isTravelRequest && !isRealtimeRequest && !isDailyPlanningRequest)
+        {
+            return new ActiveAgentContext(
+                _registry.Skills.Select(skill => skill.Name).ToArray(),
+                _registry.Tools.Select(tool => tool.Name).ToArray(),
+                false);
+        }
+
+        var skillNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var toolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (isTravelRequest)
+        {
+            skillNames.Add("TravelPlanningSkill");
+            toolNames.Add("search_bus_journeys");
+            // The travel skill may need the configured home location when origin is missing.
+            toolNames.Add("get_user_profile");
+        }
+
+        if (isRealtimeRequest)
+        {
+            skillNames.Add("LiveTransitSkill");
+            toolNames.Add("get_trip_realtime");
+        }
+
+        if (isDailyPlanningRequest)
+        {
+            skillNames.Add("DailyPlanningSkill");
+            toolNames.Add("get_calendar_events");
+            toolNames.Add("get_weather_forecast");
+            toolNames.Add("get_user_profile");
+        }
+
+        return new ActiveAgentContext(
+            skillNames.ToArray(),
+            toolNames.ToArray(),
+            isTravelRequest);
+    }
+
+    private static bool ContainsAny(string value, params string[] terms)
+    {
+        return terms.Any(term => value.Contains(
+            term,
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record ActiveAgentContext(
+        IReadOnlyCollection<string> SkillNames,
+        IReadOnlyCollection<string> ToolNames,
+        bool IsTravelRequest);
 
     private static string BuildModelFacingToolResult(
     string toolName,

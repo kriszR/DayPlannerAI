@@ -18,53 +18,29 @@ public sealed class TravelPlanningSkill : IAgentSkill
        "Utazások tervezése és menetrendi járatok keresése.";
 
    public string Instructions => """
-        Ez a képesség autóbuszos utazások megtervezésére szolgál.
+        Utazási kérésnél az alábbi szabályokat kövesd.
 
-        Feladataid:
-        - Értelmezd a felhasználó természetes nyelvű utazási kérését.
-        - Azonosítsd az indulási és céltelepülést.
-        - Értsd meg, hogy a felhasználó mikor akar indulni,
-          vagy mikorra akar megérkezni.
-        - Használd a keresési Toolt a tényleges járatok lekéréséhez.
+        - A teljes beszélgetésből vedd át a korábban megadott célállomást és indulási helyet.
+        - A felhasználó legutóbbi pontosítása mindig felülírja a korábbi adatot.
+        - "Most szeretnék indulni" esetén a searchMode = "departAfter",
+          a departureTime = "now", az utazás dátuma pedig a rendszerben megadott mai dátum.
+        - Konkrét indulási idő esetén searchMode = "departAfter".
+        - Konkrét érkezési határidő esetén searchMode = "arriveBy".
+        - Ha az indulási hely hiányzik, hívd meg a get_user_profile eszközt,
+          és a homeLocation mezőből vedd át a települést. Ha nem egyértelmű,
+          kérdezz vissza.
+        - Ha a célállomás hiányzik, kérdezz vissza.
+        - Ha minden szükséges adat rendelkezésre áll, AZONNAL hívd meg a
+          search_bus_journeys eszközt. Ne küldj előzetes olyan üzenetet,
+          hogy "keresem a járatokat" vagy "kérlek, várj".
+        - Ne találj ki települést, dátumot, időpontot vagy járatot.
+        - A válaszod kizárólag a keresőeszköz tényleges eredményére épüljön.
+        - Ha nincs közvetlen járat, csak akkor állítsd, hogy átszállásos
+          keresés is történt, ha az eszköz eredménye ezt jelzi.
+        - Valós idejű GPS- vagy késési kérésnél használd a LiveTransitSkill
+          eszközt is; a menetrendi adatot különböztesd meg a valós idejű adattól.
 
-        Keresési szabályok:
-
-        1. Ha a felhasználó azt mondja, hogy most akar indulni,
-           a searchMode legyen departAfter, a departureTime pedig "now".
-
-        2. Ha a felhasználó indulási időpontot ad meg,
-           a searchMode legyen departAfter.
-
-        3. Ha a felhasználó érkezési határidőt ad meg,
-           a searchMode legyen arriveBy.
-
-        4. A mai nap, holnap és holnapután értelmezéséhez
-           használd a rendszerben megadott aktuális dátumot.
-
-        5. Használd a korábbi beszélgetés releváns adatait,
-           ha a felhasználó nem adott meg új értéket.
-
-        6. Ha a felhasználó új indulási települést nevez meg,
-           az új helyszínt használd a korábbi helyett.
-
-        7. Ha nem világos az indulási hely vagy a cél,
-           kérdezz vissza. Ne találj ki településeket.
-
-        8. Mindig a tényleges Tool-eredmények alapján válaszolj.
-
-        9. Ha nincs megfelelő közvetlen járat,
-           jelezd, hogy átszállásos keresést is végeztél,
-           ha a Tool ezt valóban megtette.
-         10.    Ha a felhasználó GPS-pozíciót, aktuális járműhelyzetet
-         vagy késési adatokat is kér:
-         - Először keresd meg a megfelelő járatokat.
-         - A keresési eredményből vedd át a pontos tripId és serviceDate értékeket.
-         - Ezután hívd meg a get_trip_realtime eszközt.
-         - A keresési és valós idejű eredményeket együtt értelmezd.
-         - Ne állítsd, hogy egy busz már úton van, ha nincs hozzá
-         megfelelő valós idejű információd.
-
-        Minden válasz magyar nyelvű legyen.
+        Mindig magyarul válaszolj, tömören.
         """;
 
    public IReadOnlyList<IAgentTool> Tools =>

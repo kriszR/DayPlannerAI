@@ -27,19 +27,33 @@ public sealed class AgentSkillRegistry
         return _tools.TryGetValue(name, out tool!);
     }
 
-    public string BuildSkillInstructions()
+    public string BuildSkillInstructions(
+        IReadOnlyCollection<string>? skillNames = null)
     {
+        var selectedSkills = skillNames is null
+            ? _skills
+            : _skills.Where(skill => skillNames.Contains(
+                skill.Name,
+                StringComparer.OrdinalIgnoreCase));
+
         return string.Join(
             "\n\n",
-            _skills.Select(skill =>
+            selectedSkills.Select(skill =>
                 $"Skill: {skill.Name}\n" +
                 $"Description: {skill.Description}\n" +
                 skill.Instructions));
     }
 
-    public List<object> GetOllamaToolDefinitions()
+    public List<object> GetOllamaToolDefinitions(
+        IReadOnlyCollection<string>? toolNames = null)
     {
-        return _tools.Values.Select(tool => (object)new
+        var selectedTools = toolNames is null
+            ? _tools.Values
+            : _tools.Values.Where(tool => toolNames.Contains(
+                tool.Name,
+                StringComparer.OrdinalIgnoreCase));
+
+        return selectedTools.Select(tool => (object)new
         {
             type = "function",
             function = new

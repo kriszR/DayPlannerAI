@@ -243,6 +243,8 @@ public sealed class GtfsRouteSearchService
 
         var departureCutoffSeconds =
             (int)departAfter.ToTimeSpan().TotalSeconds;
+        var earliestDepartureSeconds =
+            GetEarliestDepartureSeconds(travelDate);
 
         var rawResults = await (
             from departure in _dbContext.GtfsStopTimes.AsNoTracking()
@@ -274,6 +276,7 @@ public sealed class GtfsRouteSearchService
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
                   && departureSeconds.Value >= departureCutoffSeconds
+                  && departureSeconds.Value > earliestDepartureSeconds
                   && arrivalSeconds.Value > departureSeconds.Value
                   && activeServiceIds.Contains(trip.ServiceId)
                   && (
@@ -338,14 +341,57 @@ public sealed class GtfsRouteSearchService
             .ToList();
     }
 
-    public async Task<List<GtfsJourneyDto>> SearchOneTransferRoutesAsync(
-    string fromCity,
-    string toCity,
-    DateOnly travelDate,
-    TimeOnly arriveBy,
-    int limit = 5,
-    CancellationToken cancellationToken = default)
+    public Task<List<GtfsJourneyDto>> SearchOneTransferRoutesAsync(
+        string fromCity,
+        string toCity,
+        DateOnly travelDate,
+        TimeOnly arriveBy,
+        int limit = 5,
+        CancellationToken cancellationToken = default)
     {
+        return SearchOneTransferRoutesCoreAsync(
+            fromCity,
+            toCity,
+            travelDate,
+            arriveBy,
+            null,
+            limit,
+            cancellationToken);
+    }
+
+    public Task<List<GtfsJourneyDto>> SearchOneTransferRoutesAfterAsync(
+        string fromCity,
+        string toCity,
+        DateOnly travelDate,
+        TimeOnly departAfter,
+        int limit = 5,
+        CancellationToken cancellationToken = default)
+    {
+        return SearchOneTransferRoutesCoreAsync(
+            fromCity,
+            toCity,
+            travelDate,
+            null,
+            departAfter,
+            limit,
+            cancellationToken);
+    }
+
+    private async Task<List<GtfsJourneyDto>> SearchOneTransferRoutesCoreAsync(
+        string fromCity,
+        string toCity,
+        DateOnly travelDate,
+        TimeOnly? arriveBy,
+        TimeOnly? departAfter,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (arriveBy.HasValue == departAfter.HasValue)
+        {
+            throw new ArgumentException(
+                "Exactly one of arriveBy or departAfter must be provided.");
+        }
+
         if (string.IsNullOrWhiteSpace(fromCity) ||
             string.IsNullOrWhiteSpace(toCity))
         {
@@ -404,10 +450,23 @@ public sealed class GtfsRouteSearchService
                 "Departure and destination resolve to the same stops.");
         }
 
-        var arrivalCutoffSeconds =
-            (int)arriveBy.ToTimeSpan().TotalSeconds;
+        // A missing arrival deadline means that any timetable arrival time is
+        // allowed. A departure-after search still respects both the requested
+        // time and the current local time for today's service date.
+        var arrivalCutoffSeconds = arriveBy.HasValue
+            ? (int)arriveBy.Value.ToTimeSpan().TotalSeconds
+            : int.MaxValue;
+
+        var departureCutoffSeconds = departAfter.HasValue
+            ? (int)departAfter.Value.ToTimeSpan().TotalSeconds
+            : 0;
+
         var earliestDepartureSeconds =
             GetEarliestDepartureSeconds(travelDate);
+
+        var minimumDepartureSeconds = Math.Max(
+            departureCutoffSeconds,
+            earliestDepartureSeconds + 1);
 
         // Find all possible first journey legs from the departure city.
         var firstLegs = await (
@@ -438,7 +497,7 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
-                  && departureSeconds.Value > earliestDepartureSeconds
+                  && departureSeconds.Value >= minimumDepartureSeconds
                   && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value < arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
@@ -541,7 +600,12 @@ public sealed class GtfsRouteSearchService
 
         var transferStopIds = transferStopToStation.Keys.ToArray();
 
-        // Find all possible second journey legs to the destination city.
+        // Any valid second leg must depart after the earliest possible first-leg
+        // arrival plus the minimum transfer time.
+        var earliestSecondDepartureSeconds =
+            firstLegs.Min(x => x.ArrivalSeconds) + MinimumTransferSeconds;
+
+        // Find possible second journey legs to the destination city.
         var secondLegs = await (
             from departure in _dbContext.GtfsStopTimes.AsNoTracking()
 
@@ -571,6 +635,7 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
+                  && departureSeconds.Value >= earliestSecondDepartureSeconds
                   && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value <= arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
@@ -600,22 +665,27 @@ public sealed class GtfsRouteSearchService
         if (secondLegs.Count == 0)
             return [];
 
-        // Group second legs by their transfer station.
+        // Group and sort second legs so impossible early departures can be
+        // skipped with binary search for each first leg.
         var secondLegsByStation = secondLegs
             .Where(x => transferStopToStation.ContainsKey(x.DepartureStopId))
             .GroupBy(x => transferStopToStation[x.DepartureStopId])
             .ToDictionary(
                 group => group.Key,
-                group => group.ToList());
+                group => group
+                    .OrderBy(x => x.DepartureSeconds)
+                    .ThenBy(x => x.ArrivalSeconds)
+                    .ToArray());
 
-        var results = new List<(
-            GtfsJourneyDto Journey,
-            int DepartureSeconds,
-            int ArrivalSeconds)>();
+        var resultLimit = Math.Clamp(limit, 1, 10);
+        var bestJourneys = new List<(
+            RawJourneyLeg First,
+            RawJourneyLeg Second,
+            int DurationSeconds,
+            string UniqueKey)>(resultLimit);
 
-        var uniqueJourneys = new HashSet<string>();
-
-        // Connect compatible first and second legs.
+        // Connect compatible first and second legs while keeping only the
+        // best requested number of results in memory.
         foreach (var first in firstLegs)
         {
             if (!arrivalMetadataById.TryGetValue(
@@ -635,62 +705,104 @@ public sealed class GtfsRouteSearchService
                 continue;
             }
 
-            foreach (var second in possibleSecondLegs)
+            var minimumSecondDepartureSeconds =
+                first.ArrivalSeconds + MinimumTransferSeconds;
+
+            var firstPossibleSecondIndex = FindFirstDepartureAtOrAfter(
+                possibleSecondLegs,
+                minimumSecondDepartureSeconds);
+
+            for (var i = firstPossibleSecondIndex;
+                 i < possibleSecondLegs.Length;
+                 i++)
             {
+                var second = possibleSecondLegs[i];
+
                 // A transfer must use another trip.
                 if (first.TripId == second.TripId)
                     continue;
 
-                var waitingSeconds =
-                    second.DepartureSeconds - first.ArrivalSeconds;
-
-                // Require at least ten minutes to complete the transfer.
-                if (waitingSeconds < MinimumTransferSeconds)
-                    continue;
-
-                if (second.ArrivalSeconds > arrivalCutoffSeconds)
-                    continue;
-
+                // The result query already enforces the arrival deadline.
                 var uniqueKey =
-                    $"{first.TripId}|{first.ArrivalStopId}|{second.TripId}|{second.DepartureStopId}";
+                    $"{first.TripId}|{first.DepartureStopId}|{first.ArrivalStopId}|" +
+                    $"{second.TripId}|{second.DepartureStopId}|{second.ArrivalStopId}";
 
-                if (!uniqueJourneys.Add(uniqueKey))
+                if (bestJourneys.Any(x => x.UniqueKey == uniqueKey))
                     continue;
 
-                var journey = new GtfsJourneyDto
-                {
-                    DepartureStop = first.DepartureStop,
-                    ArrivalStop = second.ArrivalStop,
-                    DepartureTime = FormatGtfsTime(first.DepartureSeconds),
-                    ArrivalTime = FormatGtfsTime(second.ArrivalSeconds),
-                    TotalDurationMinutes =
-                        (second.ArrivalSeconds - first.DepartureSeconds) / 60,
-                    TransferCount = 1,
-                    ServiceDate = travelDate,
-                    Legs =
-                    [
-                        MapJourneyLeg(first),
-                    MapJourneyLeg(second)
-                    ]
-                };
+                var candidateDurationSeconds =
+                    second.ArrivalSeconds - first.DepartureSeconds;
 
-                results.Add((
-                    journey,
-                    first.DepartureSeconds,
-                    second.ArrivalSeconds));
+                var insertIndex = bestJourneys.FindIndex(existing =>
+                    candidateDurationSeconds < existing.DurationSeconds ||
+                    (candidateDurationSeconds == existing.DurationSeconds &&
+                     second.ArrivalSeconds < existing.Second.ArrivalSeconds) ||
+                    (candidateDurationSeconds == existing.DurationSeconds &&
+                     second.ArrivalSeconds == existing.Second.ArrivalSeconds &&
+                     first.DepartureSeconds > existing.First.DepartureSeconds));
+
+                if (insertIndex < 0)
+                {
+                    if (bestJourneys.Count >= resultLimit)
+                        continue;
+
+                    bestJourneys.Add((
+                        first,
+                        second,
+                        candidateDurationSeconds,
+                        uniqueKey));
+                }
+                else
+                {
+                    bestJourneys.Insert(insertIndex, (
+                        first,
+                        second,
+                        candidateDurationSeconds,
+                        uniqueKey));
+                }
+
+                if (bestJourneys.Count > resultLimit)
+                    bestJourneys.RemoveAt(bestJourneys.Count - 1);
             }
         }
 
-        return results
-            // Prefer the shortest complete journey, using exact seconds.
-            .OrderBy(x => x.ArrivalSeconds - x.DepartureSeconds)
-            // If journey durations are equal, prefer the earlier arrival.
-            .ThenBy(x => x.ArrivalSeconds)
-            // If both are equal, prefer the later departure.
-            .ThenByDescending(x => x.DepartureSeconds)
-            .Take(Math.Clamp(limit, 1, 10))
-            .Select(x => x.Journey)
+        return bestJourneys
+            .Select(x => new GtfsJourneyDto
+            {
+                DepartureStop = x.First.DepartureStop,
+                ArrivalStop = x.Second.ArrivalStop,
+                DepartureTime = FormatGtfsTime(x.First.DepartureSeconds),
+                ArrivalTime = FormatGtfsTime(x.Second.ArrivalSeconds),
+                TotalDurationMinutes = x.DurationSeconds / 60,
+                TransferCount = 1,
+                ServiceDate = travelDate,
+                Legs =
+                [
+                    MapJourneyLeg(x.First),
+                    MapJourneyLeg(x.Second)
+                ]
+            })
             .ToList();
+    }
+
+    private static int FindFirstDepartureAtOrAfter(
+        IReadOnlyList<RawJourneyLeg> legs,
+        int minimumDepartureSeconds)
+    {
+        var low = 0;
+        var high = legs.Count;
+
+        while (low < high)
+        {
+            var middle = low + ((high - low) / 2);
+
+            if (legs[middle].DepartureSeconds < minimumDepartureSeconds)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+
+        return low;
     }
 
     private async Task<List<string>> GetBusStationStopIdsAsync(
