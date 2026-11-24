@@ -6,6 +6,7 @@ export interface UserProfile {
     displayName: string;
     homeLocation: string | null;
     timeZone: string;
+    preparationMinutes: number | null;
     createdAt: string;
 }
 
@@ -19,6 +20,7 @@ export interface UpdateProfileRequest {
     displayName: string;
     homeLocation: string | null;
     timeZone: string;
+    preparationMinutes: number | null;
 }
 
 export interface UpdateProfileResponse {

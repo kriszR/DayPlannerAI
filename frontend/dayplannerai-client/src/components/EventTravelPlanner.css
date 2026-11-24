@@ -1,0 +1,106 @@
+
+.event-travel-planner {
+  margin-top: 14px;
+}
+
+.event-travel-planner__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 13px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 9px;
+  background: var(--card-background, white);
+  color: var(--text-color, inherit);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.event-travel-planner__button:hover:not(:disabled) {
+  background: var(--background-secondary, #f3f4f6);
+}
+
+.event-travel-planner__button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.event-travel-planner__status,
+.event-travel-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 9px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  opacity: 0.75;
+}
+
+.event-travel-planner__error {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.event-travel-planner__result {
+  margin-top: 14px;
+}
+
+.event-travel-planner__journeys {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.event-travel-planner__journeys > h4 {
+  margin: 0;
+}
+
+.event-travel-planner__journey {
+  padding: 14px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 10px;
+}
+
+.event-travel-planner__journey-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.event-travel-planner__journey-header span {
+  font-size: 0.82rem;
+  opacity: 0.7;
+}
+
+.event-travel-planner__leg {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-color, #e5e7eb);
+  font-size: 0.85rem;
+}
+
+.event-travel-planner__leg span {
+  opacity: 0.75;
+}
+
+.event-travel-planner__answer {
+  padding: 12px;
+  border-radius: 9px;
+  background: var(--background-secondary, #f3f4f6);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}

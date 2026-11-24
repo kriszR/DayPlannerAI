@@ -23,6 +23,9 @@ function Settings() {
     const [displayName, setDisplayName] = useState<string | null>(null);
     const [homeLocation, setHomeLocation] = useState<string | null>(null);
     const [timeZone, setTimeZone] = useState<string | null>(null);
+    const [preparationMinutes, setPreparationMinutes] = useState<string | null>(
+        null
+    );
 
     const [successMessage, setSuccessMessage] = useState("");
 
@@ -47,12 +50,25 @@ function Settings() {
         event.preventDefault();
         setSuccessMessage("");
 
+        const preparationMinutesInput =
+            event.currentTarget.elements.namedItem("preparationMinutes");
+
+        if (
+            !(preparationMinutesInput instanceof HTMLInputElement) ||
+            !preparationMinutesInput.reportValidity()
+        ) {
+            return;
+        }
+
         updateMutation.mutate({
             displayName: (displayName ?? data!.displayName).trim(),
             homeLocation: (
                 homeLocation ?? data!.homeLocation ?? ""
             ).trim() || null,
             timeZone: (timeZone ?? data!.timeZone).trim(),
+            preparationMinutes: preparationMinutesInput.value
+                ? preparationMinutesInput.valueAsNumber
+                : null,
         });
     }
 
@@ -159,6 +175,34 @@ function Settings() {
                                     UTC
                                 </option>
                             </select>
+                        </div>
+
+                        <div className="form-group">
+                            <label htmlFor="preparationMinutes">
+                                Felkészülési idő indulás előtt (perc)
+                            </label>
+
+                            <input
+                                id="preparationMinutes"
+                                name="preparationMinutes"
+                                type="number"
+                                min={0}
+                                max={180}
+                                step={1}
+                                value={
+                                    preparationMinutes ??
+                                    data.preparationMinutes?.toString() ??
+                                    ""
+                                }
+                                onChange={(event) =>
+                                    setPreparationMinutes(event.target.value)
+                                }
+                            />
+
+                            <small>
+                                Ennyi időt tervez be az asszisztens az indulás
+                                előtti készülődésre (0–180 perc).
+                            </small>
                         </div>
 
                         {successMessage && (

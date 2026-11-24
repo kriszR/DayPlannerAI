@@ -12,7 +12,6 @@ import {
   Sunrise,
   Sunset,
   RefreshCw,
-  ExternalLink,
 } from "lucide-react";
 
 import { checkApiHealth, getProfile } from "../api/profileApi";
@@ -27,6 +26,8 @@ import {
   getCurrentWeatherEmoji,
 } from "../utils/weatherUtils";
 import WorldClock from "../components/WorldClock";
+import { generateDailyPlan } from "../api/dailyPlanApi";
+import DailyTimeline from "../components/DailyTimeline";
 
 function Dashboard() {
   const profileQuery = useQuery({
@@ -85,6 +86,20 @@ function Dashboard() {
   };
 
   const todayKey = getLocalDateKey(new Date());
+
+  const dailyPlanQuery = useQuery({
+    queryKey: [
+      "daily-plan",
+      todayKey,
+      profileQuery.data?.preparationMinutes,
+      profileQuery.data?.homeLocation,
+    ],
+    queryFn: ({ signal }) => generateDailyPlan(todayKey, signal),
+    enabled: profileQuery.isSuccess,
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 
   const todayEvents = useMemo(() => {
     return (calendarQuery.data ?? [])
@@ -159,6 +174,69 @@ function Dashboard() {
       </section>
 
       <WorldClock />
+
+      <section className="section">
+        <div className="section-heading">
+          <div>
+            <h2>Mai napi terv</h2>
+            <span>DayPlannerAI személyre szabott napirendje</span>
+          </div>
+
+          <button
+            className="weather-retry-button"
+            type="button"
+            onClick={() => dailyPlanQuery.refetch()}
+            disabled={dailyPlanQuery.isFetching}
+          >
+            <RefreshCw
+              size={16}
+              className={dailyPlanQuery.isFetching ? "weather-spin" : ""}
+            />
+            {dailyPlanQuery.isFetching ? "Tervezés..." : "Újratervezés"}
+          </button>
+        </div>
+
+        {dailyPlanQuery.isLoading && (
+          <div className="weather-message">
+            <RefreshCw size={22} className="weather-spin" />
+            <div>
+              <strong>A DayPlannerAI összeállítja a napodat</strong>
+              <p>
+                Naptár, időjárás és felhasználói profil lekérdezése... Ez a
+                helyi AI miatt eltarthat egy ideig.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {dailyPlanQuery.isError && (
+          <div className="weather-message weather-error">
+            <Sparkles size={22} />
+            <div>
+              <strong>Nem sikerült elkészíteni a napi tervet</strong>
+              <p>
+                {dailyPlanQuery.error instanceof Error
+                  ? dailyPlanQuery.error.message
+                  : "Ismeretlen hiba történt."}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {dailyPlanQuery.data && (
+          <div className="setup-card">
+            <div
+              style={{
+                whiteSpace: "pre-wrap",
+                lineHeight: 1.7,
+                width: "100%",
+              }}
+            >
+              {dailyPlanQuery.data}
+            </div>
+          </div>
+        )}
+      </section>
 
       <section className="section">
         <div className="section-heading">
@@ -362,90 +440,11 @@ function Dashboard() {
         )}
       </section>
 
-      <section className="section">
-        <div className="section-heading">
-          <h2>Mai programok</h2>
-          <span>
-            {calendarQuery.data
-              ? `${todayEvents.length} esemény`
-              : "Google Naptár"}
-          </span>
-        </div>
-
-        {calendarQuery.isLoading && (
-          <div className="calendar-message">
-            <RefreshCw size={20} className="weather-spin" />
-            <span>Naptáresemények betöltése...</span>
-          </div>
-        )}
-
-        {calendarQuery.isError && (
-          <div className="calendar-message calendar-error">
-            <CalendarDays size={20} />
-            <div>
-              <strong>Nem sikerült betölteni a naptárat.</strong>
-              <p>
-                {calendarQuery.error instanceof Error
-                  ? calendarQuery.error.message
-                  : "Ismeretlen hiba történt."}
-              </p>
-              <button
-                className="weather-retry-button"
-                type="button"
-                onClick={() => calendarQuery.refetch()}
-              >
-                Újrapróbálás
-              </button>
-            </div>
-          </div>
-        )}
-
-        {calendarQuery.isSuccess && todayEvents.length === 0 && (
-          <div className="calendar-message">
-            <CalendarDays size={22} />
-            <div>
-              <strong>Ma nincs betervezett programod.</strong>
-              <p>A Google Naptárban szereplő mai események itt jelennek meg.</p>
-            </div>
-          </div>
-        )}
-
-        {todayEvents.length > 0 && (
-          <div className="calendar-event-list">
-            {todayEvents.map((event) => (
-              <article className="calendar-event-card" key={event.id}>
-                <div className="calendar-event-time">
-                  <Clock size={18} />
-                  <strong>{formatEventTime(event)}</strong>
-                </div>
-
-                <div className="calendar-event-content">
-                  <h3>{event.summary || "Névtelen esemény"}</h3>
-
-                  {event.location && (
-                    <span className="calendar-event-location">
-                      <MapPin size={14} />
-                      {event.location}
-                    </span>
-                  )}
-                </div>
-
-                {event.htmlLink && (
-                  <a
-                    href={event.htmlLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="calendar-event-link"
-                    aria-label="Esemény megnyitása a Google Naptárban"
-                  >
-                    <ExternalLink size={18} />
-                  </a>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+      <DailyTimeline
+        events={todayEvents}
+        preparationMinutes={profileQuery.data?.preparationMinutes ?? 30}
+        departureLocation={profileQuery.data?.homeLocation ?? null}
+      />
 
       <section className="section">
         <div className="section-heading">
