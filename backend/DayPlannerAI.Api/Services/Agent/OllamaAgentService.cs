@@ -173,6 +173,17 @@ public sealed class OllamaAgentService
                     activeContext.IsTravelRequest ||
                     requiresDailyPlanBusSearch;
 
+                var responseContent = GetMessageContent(assistantMessage);
+
+                if (busSearchIsRequired &&
+                    !busSearchWasExecuted &&
+                    IsClarificationQuestion(responseContent))
+                {
+                    return new AgentChatResult(
+                        responseContent,
+                        executedToolResults);
+                }
+
                 if (busSearchIsRequired &&
                     !busSearchWasExecuted &&
                     !forceBusSearch &&
@@ -190,6 +201,7 @@ public sealed class OllamaAgentService
                             "a felhasználó korábbi üzeneteiből, a profilt és naptárat " +
                             "pedig a korábban visszakapott eszközeredményekből vedd át. " +
                             "Ne találj ki adatot. Ha valamelyik kötelező adat hiányzik, " +
+                            "beleértve a konkrét indulási időt vagy érkezési határidőt, " +
                             "ne indíts keresést, hanem kérdezz vissza egyetlen konkrét kérdéssel. " +
                             "Ha minden adat rendelkezésre áll, hívd meg most az eszközt."
                     });
@@ -204,8 +216,6 @@ public sealed class OllamaAgentService
                         "A required bus search was not executed after the forced retry.");
                 }
 
-                var responseContent = GetMessageContent(assistantMessage);
-
                 // A travel answer containing timetable claims is only allowed
                 // after the bus-search tool has actually run. If the model
                 // skips the tool, fail closed instead of inventing a journey.
@@ -215,7 +225,7 @@ public sealed class OllamaAgentService
                         "search_bus_journeys",
                         StringComparison.OrdinalIgnoreCase)) &&
                     !string.IsNullOrWhiteSpace(responseContent) &&
-                    (!responseContent.Contains('?') || responseContent.Any(char.IsDigit)))
+                    !IsClarificationQuestion(responseContent))
                 {
                     _logger.LogWarning(
                         "Travel response blocked because search_bus_journeys was not executed.");
@@ -238,11 +248,24 @@ public sealed class OllamaAgentService
 
             foreach (var toolCall in toolCalls.EnumerateArray())
             {
+                var functionName = GetToolName(toolCall);
+                if (activeContext.IsTravelRequest &&
+                    string.Equals(
+                        functionName,
+                        "search_bus_journeys",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !HasExplicitTravelTime(conversation))
+                {
+                    return new AgentChatResult(
+                        "Mikor szeretnél indulni?",
+                        executedToolResults);
+                }
+
                 var toolResult = await ExecuteToolCallAsync(
                     toolCall,
-                    cancellationToken);
+                    cancellationToken,
+                    activeContext.IsTravelRequest ? conversation : null);
 
-                var functionName = GetToolName(toolCall);
                 executedToolResults.Add(
     new AgentToolExecutionResult(
         functionName,
@@ -341,7 +364,7 @@ public sealed class OllamaAgentService
                         x.ToolName,
                         "search_bus_journeys",
                         StringComparison.OrdinalIgnoreCase)) &&
-                    (!content.Contains('?') || content.Any(char.IsDigit)))
+                    !IsClarificationQuestion(content))
                 {
                     _logger.LogWarning(
                         "Final travel response blocked because search_bus_journeys was not executed.");
@@ -579,7 +602,8 @@ public sealed class OllamaAgentService
 
     private async Task<string> ExecuteToolCallAsync(
         JsonElement toolCall,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<AiChatMessageRequest>? conversation = null)
     {
         var function = toolCall.GetProperty("function");
 
@@ -609,8 +633,40 @@ public sealed class OllamaAgentService
 
         try
         {
+            var argumentsJson = arguments.GetRawText();
+            if (conversation is not null &&
+                string.Equals(
+                    name,
+                    "search_bus_journeys",
+                    StringComparison.OrdinalIgnoreCase) &&
+                ResolveRelativeTravelDate(conversation) is DateOnly requestedDate)
+            {
+                var normalizedArguments = JsonNode.Parse(argumentsJson) as JsonObject
+                    ?? throw new JsonException(
+                        "Bus-search arguments must be a JSON object.");
+                var normalizedDateText = requestedDate.ToString(
+                    "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture);
+                var modelDateText = normalizedArguments["travelDate"]?.GetValue<string>();
+
+                if (!string.Equals(
+                        modelDateText,
+                        normalizedDateText,
+                        StringComparison.Ordinal))
+                {
+                    _logger.LogWarning(
+                        "Relative travel date corrected. ModelDate={ModelDate}, " +
+                        "ResolvedDate={ResolvedDate}.",
+                        modelDateText,
+                        normalizedDateText);
+                    normalizedArguments["travelDate"] = normalizedDateText;
+                }
+
+                argumentsJson = normalizedArguments.ToJsonString(_jsonOptions);
+            }
+
             using var argumentsDocument = JsonDocument.Parse(
-                arguments.GetRawText());
+                argumentsJson);
 
             _logger.LogInformation(
                 "Executing AI tool: {ToolName}",
@@ -863,6 +919,8 @@ public sealed class OllamaAgentService
               - Ha a felhasználó csak a célállomást módosítja (például: "inkább Balatonfüredre"), tartsd meg a korábbi indulási helyet és a korábbi időzítési szándékot.
               - "Most szeretnék indulni", "azonnal indulnék" vagy "minél előbb" = searchMode "departAfter", departureTime "now", travelDate a mai dátum.
               - A "now" értéket soha ne helyettesítsd korábbi üzenetből származó fix idővel.
+              - A "10 órára kell odaérnem" vagy "legkésőbb 10-re legyek ott" érkezési határidő: searchMode "arriveBy", arrivalTime "10:00". Ilyenkor ne kérdezz indulási időt.
+              - Ha az indulási hely, a célállomás és az utazási dátum ismert, de nincs konkrét indulási idő vagy érkezési határidő, ne indíts keresést; kérdezd meg: "Mikor szeretnél indulni?"
               - Ha minden kötelező adat ismert, minden utazási kérésnél kötelező meghívni a search_bus_journeys eszközt, még akkor is, ha csak a célállomás változott.
               - Tilos azt írnod, hogy "keresem a járatokat" vagy "várj", ha nem hívtad meg az eszközt.
               - Ha egy szükséges adat hiányzik, csak azt az egy adatot kérdezd meg.
@@ -930,34 +988,30 @@ public sealed class OllamaAgentService
         // Classify intent from user messages only. Assistant responses may
         // mention calendars, weather, buses, or travel rules and must not
         // activate unrelated skills on their own.
-        var contextText = string.Join(
-            " ",
-            conversation
-                .Where(message => string.Equals(
-                    message.Role,
-                    "user",
-                    StringComparison.OrdinalIgnoreCase))
-                .TakeLast(6)
-                .Select(message => message.Content ?? string.Empty));
+        // Classify the latest user turn as the active intent. Older user turns
+        // provide context to the model, but must not keep unrelated skills active.
+        var latestUserMessage = conversation.LastOrDefault(message =>
+            string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
+            ?.Content ?? string.Empty;
+        var contextText = latestUserMessage.Trim();
 
         var isRealtimeRequest = ContainsAny(
             contextText,
             "gps", "valós idő", "hol jár", "késés", "késik", "járműpozíció");
 
-        var isDailyPlanningRequest = ContainsAny(
+        // Travel intent includes natural arrive-at phrasing, even when the
+        // user never says bus/train/travel (e.g. "Veszprémben lenni 8-ra").
+        var isTravelRequest =
+            HasTravelIntent(contextText) ||
+            IsTravelClarificationFollowUp(conversation);
+
+        // A standalone trip request must not activate calendar/weather planning
+        // just because it mentions tomorrow or a destination.
+        var isDailyPlanningRequest = !isTravelRequest && ContainsAny(
             contextText,
             "napi terv", "napi tervez", "tervezd meg", "napomat", "napom", "holnapom",
             "mai nap", "programom", "naptár", "időjárás", "eseményeim",
             "napi beosztás", "mit csináljak holnap", "mit csináljak ma");
-
-        // Daily-plan prompts can mention bus searches conditionally. Do not
-        // treat those instructions as a standalone travel request, which
-        // would force a bus search even when no calendar event needs one.
-        var isTravelRequest = !isDailyPlanningRequest && ContainsAny(
-            contextText,
-            "utaz", "eljut", "jutni", "szeretnék jutni", "szeretnék menni",
-            "menni", "járat", "busz", "vonat", "menetrend", "indul",
-            "érkez", "átszáll", "állomás");
 
         if (!isTravelRequest && !isRealtimeRequest && !isDailyPlanningRequest)
         {
@@ -1004,6 +1058,163 @@ public sealed class OllamaAgentService
         return terms.Any(term => value.Contains(
             term,
             StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsClarificationQuestion(string content)
+    {
+        return content.Contains('?');
+    }
+
+    private static bool HasTravelIntent(string value)
+    {
+        var explicitTravelIntent = ContainsAny(
+            value,
+            "utaz", "eljut", "jutni", "szeretnék menni", "menni",
+            "járat", "busz", "vonat", "menetrend", "indul",
+            "érkez", "átszáll", "állomás", "odaér", "odaérni",
+            "ott lenni", "-ra érni", "-re érni", "-ra odaér", "-re odaér");
+        var arriveAtIntent = Regex.IsMatch(
+            value,
+            @"(?=.*\b(?:lenni|érni|odaérni)\b)(?=.*\b(?:reggel|délelőtt|délután|este|óra|órára|-ra|-re)\b)(?=.*\d).+",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        return explicitTravelIntent || arriveAtIntent;
+    }
+
+    private static bool IsTravelClarificationFollowUp(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        var latestUserIndex = FindLatestUserMessageIndex(conversation);
+
+        if (latestUserIndex < 2 ||
+            !string.Equals(
+                conversation[latestUserIndex - 1].Role,
+                "assistant",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var assistantQuestion = conversation[latestUserIndex - 1].Content ?? string.Empty;
+
+        return conversation
+                   .Take(latestUserIndex - 1)
+                   .Any(message =>
+                       string.Equals(
+                           message.Role,
+                           "user",
+                           StringComparison.OrdinalIgnoreCase) &&
+                       HasTravelIntent(message.Content ?? string.Empty)) &&
+               ContainsAny(
+                   assistantQuestion,
+                   "honnan", "indulási hely", "indulási település",
+                   "hova szeretnél", "hová szeretnél", "célállomás",
+                   "mikor szeretnél indulni", "mikorra kell odaérni",
+                   "mikor kell odaérned", "milyen időpontban");
+    }
+
+    private static int FindLatestUserMessageIndex(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        for (var index = conversation.Count - 1; index >= 0; index--)
+        {
+            if (string.Equals(
+                    conversation[index].Role,
+                    "user",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string GetPendingTravelUserText(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        var latestUserIndex = FindLatestUserMessageIndex(conversation);
+        if (latestUserIndex < 0)
+            return string.Empty;
+
+        var latestUserText = conversation[latestUserIndex].Content ?? string.Empty;
+        if (Regex.IsMatch(
+                latestUserText,
+                @"\b(?:holnapután|holnap|ma)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+            !IsTravelClarificationFollowUp(conversation))
+        {
+            return latestUserText;
+        }
+
+        var priorTravelRequestIndex = -1;
+        for (var index = latestUserIndex - 2; index >= 0; index--)
+        {
+            if (string.Equals(
+                    conversation[index].Role,
+                    "user",
+                    StringComparison.OrdinalIgnoreCase) &&
+                HasTravelIntent(conversation[index].Content ?? string.Empty))
+            {
+                priorTravelRequestIndex = index;
+                break;
+            }
+        }
+
+        if (priorTravelRequestIndex < 0)
+            return latestUserText;
+
+        return string.Join(
+            " ",
+            conversation
+                .Skip(priorTravelRequestIndex)
+                .Take(latestUserIndex - priorTravelRequestIndex + 1)
+                .Where(message => string.Equals(
+                    message.Role,
+                    "user",
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(message => message.Content ?? string.Empty));
+    }
+
+    private static bool HasExplicitTravelTime(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        var travelText = GetPendingTravelUserText(conversation);
+        return Regex.IsMatch(
+                   travelText,
+                   @"\b(?:[01]?\d|2[0-3]):[0-5]\d\b|\b\d{1,2}\s*ór(?:a|á)(?:kor|ra|re|ig)?\b|\b\d{1,2}-(?:kor|ra|re|ig)\b",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               ContainsAny(
+                   travelText,
+                   "most", "azonnal", "minél előbb", "rögtön");
+    }
+
+    private static DateOnly? ResolveRelativeTravelDate(
+        IReadOnlyList<AiChatMessageRequest> conversation)
+    {
+        var matches = Regex.Matches(
+            GetPendingTravelUserText(conversation),
+            @"\b(holnapután|holnap|ma)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (matches.Count == 0)
+            return null;
+
+        var timezone = TimeZoneInfo.FindSystemTimeZoneById(
+            OperatingSystem.IsWindows()
+                ? "Central Europe Standard Time"
+                : "Europe/Budapest");
+        var today = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timezone).DateTime);
+        var relativeDate = matches[matches.Count - 1].Groups[1].Value;
+
+        if (string.Equals(relativeDate, "ma", StringComparison.OrdinalIgnoreCase))
+            return today;
+        if (string.Equals(relativeDate, "holnap", StringComparison.OrdinalIgnoreCase))
+            return today.AddDays(1);
+        if (string.Equals(relativeDate, "holnapután", StringComparison.OrdinalIgnoreCase))
+            return today.AddDays(2);
+
+        return null;
     }
 
     private sealed record ActiveAgentContext(

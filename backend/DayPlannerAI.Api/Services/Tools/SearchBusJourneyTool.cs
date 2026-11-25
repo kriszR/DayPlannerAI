@@ -64,13 +64,13 @@ public sealed class SearchBusJourneysTool : IAgentTool
             {
                 ["type"] = "string",
                 ["description"] =
-                    "Indulási idő HH:mm formátumban. Ha a felhasználó most, azonnal vagy minél előbb szeretne indulni, kötelezően 'now' értéket adj meg; ne használj korábbi üzenetből származó fix időpontot."
+                    "Indulási idő HH:mm formátumban. departAfter kereséshez kötelező, kivéve ha a felhasználó most, azonnal vagy minél előbb szeretne indulni; ilyenkor 'now' értéket adj meg. Ne használj korábbi üzenetből származó fix időpontot."
             },
             ["arrivalTime"] = new JsonObject
             {
                 ["type"] = "string",
                 ["description"] =
-                    "Kívánt érkezési idő HH:mm formátumban."
+                    "Kívánt érkezési határidő HH:mm formátumban. Például: '10 órára kell odaérnem' esetén searchMode=arriveBy és arrivalTime='10:00'."
             }
         },
         ["required"] = new JsonArray
@@ -236,11 +236,21 @@ public sealed class SearchBusJourneysTool : IAgentTool
             if (string.Equals(
                     departureTimeText,
                     "now",
-                    StringComparison.OrdinalIgnoreCase) ||
-                string.IsNullOrWhiteSpace(departureTimeText))
+                    StringComparison.OrdinalIgnoreCase))
             {
+                if (travelPlan.TravelDate != today)
+                {
+                    throw new ArgumentException(
+                        "A 'now' indulási idő csak a mai utazási naphoz használható.");
+                }
+
                 travelPlan.TravelDate = today;
                 departureTime = TimeOnly.FromDateTime(localNow.DateTime);
+            }
+            else if (string.IsNullOrWhiteSpace(departureTimeText))
+            {
+                throw new ArgumentException(
+                    "A pontos indulási idő megadása szükséges.");
             }
             else if (!TimeOnly.TryParseExact(
                          departureTimeText,
@@ -364,6 +374,11 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 limit: 5,
                 cancellationToken: cancellationToken);
 
+            // Enforce the requested arrival deadline at the tool boundary.
+            // Never trust a route-search result that arrives after the deadline.
+            routes = routes
+                .Where(route => IsAtOrBefore(route.ArrivalTime, arrivalTime))
+                .ToList();
 
             if (routes.Count == 0)
             {
@@ -376,6 +391,10 @@ public sealed class SearchBusJourneysTool : IAgentTool
                         arrivalTime,
                         limit: 5,
                         cancellationToken: cancellationToken);
+
+                journeys = journeys
+                    .Where(journey => IsAtOrBefore(journey.ArrivalTime, arrivalTime))
+                    .ToList();
             }
         }
         else
@@ -396,6 +415,27 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 transferSearchPerformed
             },
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    }
+
+
+    private static bool IsAtOrBefore(string? timeText, TimeOnly deadline)
+    {
+        if (string.IsNullOrWhiteSpace(timeText))
+            return false;
+
+        // GTFS may represent times beyond 24:00 (for service after midnight).
+        var parts = timeText.Split(':');
+        if (parts.Length < 2 ||
+            !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var hours) ||
+            !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var minutes) ||
+            hours < 0 || minutes is < 0 or > 59)
+        {
+            return false;
+        }
+
+        var arrivalMinutes = (long)hours * 60 + minutes;
+        var deadlineMinutes = deadline.Hour * 60 + deadline.Minute;
+        return arrivalMinutes <= deadlineMinutes;
     }
 
     private static string GetRequiredString(
