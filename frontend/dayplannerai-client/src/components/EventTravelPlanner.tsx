@@ -19,6 +19,124 @@ interface TravelSearchResult {
   routes: GtfsDirectRoute[];
   journeys: GtfsJourney[];
 }
+
+interface DepartureRecommendation {
+  departureTime: string;
+  departureStop: string;
+  arrivalTime: string;
+  arrivalStop: string;
+  durationMinutes: number;
+  transferCount: number;
+  arrivalMarginMinutes: number;
+  isDirect: boolean;
+}
+
+function getServiceDateTime(serviceDate: string, time: string): Date | null {
+  const dateParts = serviceDate.split("-").map(Number);
+  const timeMatch = time.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (dateParts.length !== 3 || !timeMatch || dateParts.some(Number.isNaN)) {
+    return null;
+  }
+
+  const [year, month, day] = dateParts;
+  const hours = Number(timeMatch[1]);
+  const minutes = Number(timeMatch[2]);
+  const seconds = Number(timeMatch[3] ?? 0);
+
+  if (minutes > 59 || seconds > 59) {
+    return null;
+  }
+
+  // GTFS times can exceed 24:00 for trips continuing after midnight.
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  date.setSeconds(hours * 3600 + minutes * 60 + seconds);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getDepartureRecommendation(
+  result: TravelSearchResult,
+  eventStart: Date | null,
+): DepartureRecommendation | null {
+  if (!eventStart || Number.isNaN(eventStart.getTime())) {
+    return null;
+  }
+
+  const options: Array<{
+    departure: Date;
+    arrival: Date;
+    departureTime: string;
+    departureStop: string;
+    arrivalTime: string;
+    arrivalStop: string;
+    durationMinutes: number;
+    transferCount: number;
+    isDirect: boolean;
+  }> = [];
+
+  for (const route of result.routes) {
+    const departure = getServiceDateTime(route.serviceDate, route.departureTime);
+    const arrival = getServiceDateTime(route.serviceDate, route.arrivalTime);
+
+    if (departure && arrival && departure < eventStart && arrival < eventStart) {
+      options.push({
+        departure,
+        arrival,
+        departureTime: route.departureTime,
+        departureStop: route.departureStop,
+        arrivalTime: route.arrivalTime,
+        arrivalStop: route.arrivalStop,
+        durationMinutes: route.durationMinutes,
+        transferCount: 0,
+        isDirect: true,
+      });
+    }
+  }
+
+  for (const journey of result.journeys) {
+    const departure = getServiceDateTime(journey.serviceDate, journey.departureTime);
+    const arrival = getServiceDateTime(journey.serviceDate, journey.arrivalTime);
+
+    if (departure && arrival && departure < eventStart && arrival < eventStart) {
+      options.push({
+        departure,
+        arrival,
+        departureTime: journey.departureTime,
+        departureStop: journey.departureStop,
+        arrivalTime: journey.arrivalTime,
+        arrivalStop: journey.arrivalStop,
+        durationMinutes: journey.totalDurationMinutes,
+        transferCount: journey.transferCount,
+        isDirect: false,
+      });
+    }
+  }
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  // Prefer the latest departure that still leaves at least 10 minutes before the event.
+  const withBuffer = options.filter(
+    (option) => eventStart.getTime() - option.arrival.getTime() >= 10 * 60_000,
+  );
+  const candidates = withBuffer.length > 0 ? withBuffer : options;
+  candidates.sort((a, b) => b.departure.getTime() - a.departure.getTime());
+
+  const chosen = candidates[0];
+  return {
+    departureTime: chosen.departureTime,
+    departureStop: chosen.departureStop,
+    arrivalTime: chosen.arrivalTime,
+    arrivalStop: chosen.arrivalStop,
+    durationMinutes: chosen.durationMinutes,
+    transferCount: chosen.transferCount,
+    arrivalMarginMinutes: Math.floor(
+      (eventStart.getTime() - chosen.arrival.getTime()) / 60_000,
+    ),
+    isDirect: chosen.isDirect,
+  };
+}
 function getDestinationCity(location: string): string {
   const normalized = location.trim();
 
@@ -58,6 +176,7 @@ export default function EventTravelPlanner({
   const eventDateTime =
     event.start && !event.isAllDay ? getLocalDateTime(event.start) : null;
 
+  const eventStartDate = event.start && !event.isAllDay ? new Date(event.start) : null;
   const canSearch =
     Boolean(event.location?.trim()) &&
     Boolean(departureLocation?.trim()) &&
@@ -107,6 +226,10 @@ export default function EventTravelPlanner({
       setLoading(false);
     }
   };
+
+  const recommendation = result
+    ? getDepartureRecommendation(result, eventStartDate)
+    : null;
 
   if (event.isAllDay) {
     return null;
@@ -180,6 +303,39 @@ export default function EventTravelPlanner({
 
       {result && (
         <div className="event-travel-planner__result">
+          {recommendation && (
+            <div className="event-travel-planner__recommendation">
+              <div className="event-travel-planner__recommendation-heading">
+                <strong>Ajánlott járat</strong>
+                <span>
+                  {recommendation.isDirect
+                    ? "Közvetlen járat"
+                    : `${recommendation.transferCount} átszállás`}
+                </span>
+              </div>
+              <div className="event-travel-planner__recommendation-times">
+                <div>
+                  <small>Indulás a megállóból</small>
+                  <strong>{recommendation.departureTime}</strong>
+                  <span>{recommendation.departureStop}</span>
+                </div>
+                <div>
+                  <small>Érkezés</small>
+                  <strong>{recommendation.arrivalTime}</strong>
+                  <span>{recommendation.arrivalStop}</span>
+                </div>
+              </div>
+              <p>
+                {recommendation.durationMinutes} perc utazás · {recommendation.arrivalMarginMinutes} perc az eseményig.
+                {recommendation.arrivalMarginMinutes < 10
+                  ? " Kevés érkezési tartalék – érdemes korábbi járatot választani."
+                  : " A kiválasztás legalább 10 perc érkezési tartalékot részesít előnyben."}
+              </p>
+              <p className="event-travel-planner__recommendation-note">
+                Ez a megállóból induló járat ideje; az otthon és a megálló közötti gyaloglási időt még nem számolja.
+              </p>
+            </div>
+          )}
           {result.routes.length > 0 && (
             <TravelRouteCards routes={result.routes} />
           )}
