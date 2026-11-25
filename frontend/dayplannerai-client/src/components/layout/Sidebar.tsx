@@ -71,11 +71,6 @@ function Sidebar() {
           );
         })}
       </nav>
-
-      <div className="sidebar-footer">
-        <div className="assistant-indicator" />
-        <span>AI-asszisztens aktív</span>
-      </div>
     </aside>
   );
 }

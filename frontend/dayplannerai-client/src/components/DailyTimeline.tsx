@@ -16,6 +16,8 @@ interface DailyTimelineProps {
   events: CalendarEvent[];
   preparationMinutes: number;
   departureLocation: string | null;
+  preparationEventId: string | null;
+  preparationEnd: Date | null;
 }
 
 type TimelineItem =
@@ -51,6 +53,8 @@ function DailyTimeline({
   events,
   preparationMinutes,
   departureLocation,
+  preparationEventId,
+  preparationEnd,
 }: DailyTimelineProps) {
   const timelineItems = useMemo(() => {
     const items: TimelineItem[] = events
@@ -62,14 +66,9 @@ function DailyTimeline({
         start: event.isAllDay ? null : new Date(event.start!),
       }));
 
-    const firstTimedEvent = events
-      .filter((event) => event.start && !event.isAllDay && !isOnlineCalendarEvent(event))
-      .map((event) => ({
-        event,
-        start: new Date(event.start!),
-      }))
-      .filter(({ start }) => !Number.isNaN(start.getTime()))
-      .sort((a, b) => a.start.getTime() - b.start.getTime())[0];
+    const preparationEvent = events.find(
+      (event) => event.id === preparationEventId,
+    );
 
     const minutes = Math.max(
       0,
@@ -77,15 +76,23 @@ function DailyTimeline({
     );
 
     if (
-      firstTimedEvent &&
+      preparationEvent &&
+      preparationEvent.start &&
+      !preparationEvent.isAllDay &&
+      !isOnlineCalendarEvent(preparationEvent) &&
+      preparationEnd &&
+      !Number.isNaN(preparationEnd.getTime()) &&
       minutes > 0 &&
       !events.some((event) => event.isAllDay)
     ) {
-      const end = firstTimedEvent.start;
+      const end = preparationEnd;
       const start = new Date(end.getTime() - minutes * 60_000);
 
       // Only show preparation blocks that start on the selected day.
-      if (getDateKey(start) === getDateKey(end)) {
+      if (
+        getDateKey(start) === getDateKey(end) &&
+        end <= new Date(preparationEvent.start)
+      ) {
         items.push({
           id: "preparation",
           kind: "preparation",
@@ -104,7 +111,7 @@ function DailyTimeline({
 
       return (aTime?.getTime() ?? 0) - (bTime?.getTime() ?? 0);
     });
-  }, [events, preparationMinutes]);
+  }, [events, preparationEnd, preparationEventId, preparationMinutes]);
 
   if (events.length === 0) {
     return (
@@ -165,7 +172,7 @@ function DailyTimeline({
                   </div>
 
                   <p>
-                    A beállított felkészülési idő az első napi programod előtt.
+                    A beállított idő a busz felszálló megállóba érkezéséig tart.
                   </p>
                 </div>
               </article>

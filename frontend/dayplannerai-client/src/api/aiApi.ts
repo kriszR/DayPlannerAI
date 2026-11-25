@@ -28,6 +28,7 @@ export interface GtfsDirectRoute {
   tripHeadsign: string | null;
   departureStop: string;
   departurePlatform: string | null;
+  departureStopArrivalTime: string;
   departureTime: string;
   arrivalStop: string;
   arrivalPlatform: string | null;
@@ -45,6 +46,7 @@ export interface GtfsJourneyLeg {
   tripHeadsign: string | null;
   departureStop: string;
   departurePlatform: string | null;
+  departureStopArrivalTime: string;
   departureTime: string;
   arrivalStop: string;
   arrivalPlatform: string | null;

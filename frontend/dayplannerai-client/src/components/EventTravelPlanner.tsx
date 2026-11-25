@@ -5,6 +5,10 @@ import type { CalendarEvent } from "../api/calendarApi";
 import { type GtfsJourney, type GtfsDirectRoute } from "../api/aiApi";
 import { searchBusJourneys } from "../api/travelApi";
 import { isOnlineCalendarEvent } from "../utils/calendarEventUtils";
+import {
+  getDestinationCity,
+  getServiceDateTime,
+} from "../utils/travelTimeUtils";
 
 import TravelRouteCards from "./TravelRouteCards";
 import "./EventTravelPlanner.css";
@@ -29,29 +33,6 @@ interface DepartureRecommendation {
   transferCount: number;
   arrivalMarginMinutes: number;
   isDirect: boolean;
-}
-
-function getServiceDateTime(serviceDate: string, time: string): Date | null {
-  const dateParts = serviceDate.split("-").map(Number);
-  const timeMatch = time.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-
-  if (dateParts.length !== 3 || !timeMatch || dateParts.some(Number.isNaN)) {
-    return null;
-  }
-
-  const [year, month, day] = dateParts;
-  const hours = Number(timeMatch[1]);
-  const minutes = Number(timeMatch[2]);
-  const seconds = Number(timeMatch[3] ?? 0);
-
-  if (minutes > 59 || seconds > 59) {
-    return null;
-  }
-
-  // GTFS times can exceed 24:00 for trips continuing after midnight.
-  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
-  date.setSeconds(hours * 3600 + minutes * 60 + seconds);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function getDepartureRecommendation(
@@ -137,19 +118,6 @@ function getDepartureRecommendation(
     isDirect: chosen.isDirect,
   };
 }
-function getDestinationCity(location: string): string {
-  const normalized = location.trim();
-
-  // Google Calendar locations can contain both city and street address.
-  // Example: "Veszprém, Egyetem utca 4"
-  const commaIndex = normalized.indexOf(",");
-
-  if (commaIndex === -1) {
-    return normalized;
-  }
-
-  return normalized.substring(0, commaIndex).trim();
-}
 function getLocalDateTime(value: string) {
   const date = new Date(value);
 
@@ -204,6 +172,7 @@ export default function EventTravelPlanner({
         travelDate: eventDateTime.date,
         searchMode: "arriveBy",
         arrivalTime: eventDateTime.time,
+        includeInProgress: false,
       });
 
       setResult({

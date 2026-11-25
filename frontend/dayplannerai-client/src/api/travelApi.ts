@@ -8,6 +8,7 @@ export interface BusSearchRequest {
   searchMode: "departAfter" | "arriveBy";
   departureTime?: string;
   arrivalTime?: string;
+  includeInProgress?: boolean;
 }
 
 export interface BusSearchResponse {

@@ -22,7 +22,7 @@ export async function askAgentAboutTrip(
   };
 
   return apiPost<AgentChatRequest, AgentChatResponse>(
-    "/api/agent/chat",
+    "/agent/chat",
     request,
   );
 }

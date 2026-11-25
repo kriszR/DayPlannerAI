@@ -45,6 +45,9 @@ export default function TravelRouteCards({ routes }: TravelRouteCardsProps) {
               <div className="travel-route-card__stop">
                 <strong>{route.departureTime}</strong>
                 <span>{route.departureStop}</span>
+                <small>
+                  A busz {route.departureStopArrivalTime}-kor érkezik a megállóba
+                </small>
 
                 {route.departurePlatform && (
                   <small>Kocsiállás: {route.departurePlatform}</small>

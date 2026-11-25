@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
 import {
   Activity,
   CalendarDays,
@@ -19,6 +20,8 @@ import { checkApiHealth, getProfile } from "../api/profileApi";
 import { getClothingAdvice, getWeatherForecast } from "../api/weatherApi";
 import { getCalendarEvents } from "../api/calendarApi";
 import type { CalendarEvent } from "../api/calendarApi";
+import { searchBusJourneys } from "../api/travelApi";
+import type { BusSearchResponse } from "../api/travelApi";
 import {
   formatWeatherDate,
   getWeatherDescription,
@@ -29,6 +32,86 @@ import WorldClock from "../components/WorldClock";
 import { generateDailyPlan } from "../api/dailyPlanApi";
 import DailyTimeline from "../components/DailyTimeline";
 import { isOnlineCalendarEvent } from "../utils/calendarEventUtils";
+import {
+  getDestinationCity,
+  getServiceDateTime,
+} from "../utils/travelTimeUtils";
+
+function getBoardingStopArrival(
+  response: BusSearchResponse,
+  eventStart: Date,
+  now: Date,
+): Date | null {
+  const options: Array<{
+    boardingArrival: Date;
+    departure: Date;
+    destinationArrival: Date;
+  }> = [];
+
+  for (const route of response.availableRoutes) {
+    const boardingArrival = getServiceDateTime(
+      route.serviceDate,
+      route.departureStopArrivalTime,
+    );
+    const departure = getServiceDateTime(route.serviceDate, route.departureTime);
+    const destinationArrival = getServiceDateTime(
+      route.serviceDate,
+      route.arrivalTime,
+    );
+
+    if (
+      boardingArrival &&
+      departure &&
+      destinationArrival &&
+      boardingArrival > now &&
+      destinationArrival < eventStart
+    ) {
+      options.push({ boardingArrival, departure, destinationArrival });
+    }
+  }
+
+  for (const journey of response.availableJourneys) {
+    const firstLeg = journey.legs[0];
+    if (!firstLeg) {
+      continue;
+    }
+
+    const boardingArrival = getServiceDateTime(
+      journey.serviceDate,
+      firstLeg.departureStopArrivalTime,
+    );
+    const departure = getServiceDateTime(
+      journey.serviceDate,
+      firstLeg.departureTime,
+    );
+    const destinationArrival = getServiceDateTime(
+      journey.serviceDate,
+      journey.arrivalTime,
+    );
+
+    if (
+      boardingArrival &&
+      departure &&
+      destinationArrival &&
+      boardingArrival > now &&
+      destinationArrival < eventStart
+    ) {
+      options.push({ boardingArrival, departure, destinationArrival });
+    }
+  }
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  const withBuffer = options.filter(
+    (option) => eventStart.getTime() - option.destinationArrival.getTime() >= 10 * 60_000,
+  );
+  const candidates = withBuffer.length > 0 ? withBuffer : options;
+  candidates.sort((a, b) => b.departure.getTime() - a.departure.getTime());
+
+  return candidates[0].boardingArrival;
+}
 
 function Dashboard() {
   const profileQuery = useQuery({
@@ -47,24 +130,6 @@ function Dashboard() {
     enabled: Boolean(profileQuery.data?.homeLocation),
     retry: 1,
     staleTime: 15 * 60 * 1000,
-  });
-
-  const clothingAdviceQuery = useQuery({
-    queryKey: [
-      "clothing-advice",
-      weatherQuery.data?.location,
-      weatherQuery.data?.current.time,
-    ],
-    queryFn: () => {
-      if (!weatherQuery.data) {
-        throw new Error("Az időjárási adatok nem érhetők el.");
-      }
-
-      return getClothingAdvice(weatherQuery.data);
-    },
-    enabled: Boolean(weatherQuery.data),
-    staleTime: 15 * 60 * 1000,
-    retry: 1,
   });
 
   const calendarQuery = useQuery({
@@ -160,6 +225,28 @@ function Dashboard() {
     refetchOnWindowFocus: false,
   });
 
+  const clothingAdviceQuery = useQuery({
+    queryKey: [
+      "clothing-advice",
+      weatherQuery.data?.location,
+      weatherQuery.data?.current.time,
+    ],
+    queryFn: () => {
+      if (!weatherQuery.data) {
+        throw new Error("Az időjárási adatok nem érhetők el.");
+      }
+
+      return getClothingAdvice(weatherQuery.data);
+    },
+    enabled: Boolean(
+      weatherQuery.data &&
+        dailyPlanQuery.isFetched &&
+        !dailyPlanQuery.isFetching,
+    ),
+    staleTime: 15 * 60 * 1000,
+    retry: false,
+  });
+
   const todayEvents = useMemo(() => {
     return (calendarQuery.data ?? [])
       .filter((event) => {
@@ -191,16 +278,65 @@ function Dashboard() {
   const nextEventIsOnline = nextEvent
     ? isOnlineCalendarEvent(nextEvent)
     : false;
-  const effectivePreparationMinutes = nextEventIsOnline
-    ? 0
-    : preparationMinutes;
-
-  const preparationStart = nextEvent?.start
-    ? new Date(
-        new Date(nextEvent.start).getTime() -
-          effectivePreparationMinutes * 60_000,
-      )
+  const nextEventStart = nextEvent?.start
+    ? new Date(nextEvent.start)
     : null;
+  const nextEventDestination = nextEvent?.location
+    ? getDestinationCity(nextEvent.location)
+    : undefined;
+  const preparationBusQuery = useQuery({
+    queryKey: [
+      "preparation-bus-search",
+      nextEvent?.id,
+      nextEvent?.start,
+      profileQuery.data?.homeLocation,
+      nextEventDestination,
+    ],
+    queryFn: () => {
+      if (
+        !nextEventStart ||
+        !profileQuery.data?.homeLocation ||
+        !nextEventDestination
+      ) {
+        throw new Error("Az esemény buszkereséséhez hiányzik egy szükséges adat.");
+      }
+
+      const pad = (value: number) => String(value).padStart(2, "0");
+
+      return searchBusJourneys({
+        departureLocation: profileQuery.data.homeLocation,
+        destination: nextEventDestination,
+        travelDate: getLocalDateKey(nextEventStart),
+        searchMode: "arriveBy",
+        arrivalTime: `${pad(nextEventStart.getHours())}:${pad(nextEventStart.getMinutes())}`,
+        includeInProgress: false,
+      });
+    },
+    enabled: Boolean(
+      nextEventStart &&
+        !nextEventIsOnline &&
+        profileQuery.data?.homeLocation &&
+        nextEventDestination,
+    ),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  const boardingStopArrival =
+    nextEventStart && preparationBusQuery.data
+      ? getBoardingStopArrival(
+          preparationBusQuery.data,
+          nextEventStart,
+          currentTime,
+        )
+      : null;
+  const preparationStart =
+    boardingStopArrival && !nextEventIsOnline
+      ? new Date(
+          boardingStopArrival.getTime() - preparationMinutes * 60_000,
+        )
+      : null;
 
   const notificationTime = nextEvent?.start
     ? new Date(new Date(nextEvent.start).getTime() - 5 * 60_000)
@@ -222,6 +358,54 @@ function Dashboard() {
   const minutesUntilPreparation = preparationStart
     ? Math.ceil((preparationStart.getTime() - currentTime.getTime()) / 60_000)
     : null;
+
+  const preparationDisplayTime = calendarQuery.isLoading
+    ? "--:--"
+    : !nextEvent
+      ? "--:--"
+      : nextEventIsOnline
+        ? "Online"
+        : preparationBusQuery.isLoading
+          ? "..."
+          : !preparationStartTime
+            ? "--:--"
+            : minutesUntilPreparation !== null && minutesUntilPreparation <= 0
+              ? "Most"
+              : preparationStartTime;
+
+  const preparationDescription = (() => {
+    if (calendarQuery.isError) {
+      return "A naptár nem elérhető";
+    }
+
+    if (!nextEvent) {
+      return "Nincs további időzített esemény";
+    }
+
+    if (nextEventIsOnline) {
+      return `Online esemény – nincs készülődési idő. Értesítés: ${notificationTimeText ?? "--:--"}`;
+    }
+
+    if (preparationBusQuery.isLoading) {
+      return "Buszjárat keresése a felszálló megálló érkezési idejéhez";
+    }
+
+    if (preparationBusQuery.isError) {
+      return "A buszkeresés sikertelen; a megállóba érkezési idő nem ismert";
+    }
+
+    if (!boardingStopArrival) {
+      return profileQuery.data?.homeLocation && nextEventDestination
+        ? "Nem található megfelelő, még felszállható buszjárat"
+        : "Add meg az indulási helyet és az esemény helyszínét";
+    }
+
+    if (minutesUntilPreparation !== null && minutesUntilPreparation <= 0) {
+      return `A busz felszálló megállóba érkezéséig ${preparationMinutes} perc`;
+    }
+
+    return `${minutesUntilPreparation} perc múlva kezdj készülődni`;
+  })();
 
   useEffect(() => {
     if (notificationPermission !== "granted" || !todayEvents.length) {
@@ -327,7 +511,9 @@ function Dashboard() {
             className="weather-retry-button"
             type="button"
             onClick={() => dailyPlanQuery.refetch()}
-            disabled={dailyPlanQuery.isFetching}
+            disabled={
+              dailyPlanQuery.isFetching || clothingAdviceQuery.isFetching
+            }
           >
             <RefreshCw
               size={16}
@@ -365,15 +551,11 @@ function Dashboard() {
         )}
 
         {dailyPlanQuery.data && (
-          <div className="setup-card">
-            <div
-              style={{
-                whiteSpace: "pre-wrap",
-                lineHeight: 1.7,
-                width: "100%",
-              }}
-            >
-              {dailyPlanQuery.data}
+          <div className="setup-card daily-plan-card">
+            <div className="daily-plan-content">
+              <ReactMarkdown>
+                {dailyPlanQuery.data}
+              </ReactMarkdown>
             </div>
           </div>
         )}
@@ -508,7 +690,10 @@ function Dashboard() {
                   <strong>Öltözködési javaslat</strong>
                   <p>
                     {clothingAdviceQuery.isPending
-                      ? "Az AI az időjárási adatok alapján javaslatot készít..."
+                      ? dailyPlanQuery.isFetching ||
+                        !dailyPlanQuery.isFetched
+                        ? "A napi terv készül; az öltözködési javaslat ezután indul."
+                        : "Az AI az időjárási adatok alapján javaslatot készít..."
                       : clothingAdviceQuery.isError
                         ? "Nem sikerült AI-javaslatot készíteni az időjárási adatokból."
                         : clothingAdviceQuery.data}
@@ -517,6 +702,7 @@ function Dashboard() {
                     <button
                       className="weather-retry-button"
                       onClick={() => clothingAdviceQuery.refetch()}
+                      disabled={dailyPlanQuery.isFetching}
                       type="button"
                     >
                       Újrapróbálás
@@ -595,6 +781,8 @@ function Dashboard() {
         events={todayEvents}
         preparationMinutes={preparationMinutes}
         departureLocation={profileQuery.data?.homeLocation ?? null}
+        preparationEventId={nextEvent?.id ?? null}
+        preparationEnd={boardingStopArrival}
       />
 
       <section className="section">
@@ -679,30 +867,8 @@ function Dashboard() {
             </div>
 
             <h3>Készülődés kezdete</h3>
-            <strong>
-              {calendarQuery.isLoading
-                ? "--:--"
-                : !nextEvent || !preparationStartTime
-                  ? "--:--"
-                  : nextEventIsOnline
-                    ? "Online"
-                    : minutesUntilPreparation !== null &&
-                        minutesUntilPreparation <= 0
-                      ? "Most"
-                      : preparationStartTime}
-            </strong>
-            <span>
-              {calendarQuery.isError
-                ? "A naptár nem elérhető"
-                : !nextEvent
-                  ? "Nincs további időzített esemény"
-                  : nextEventIsOnline
-                    ? `Online esemény – nincs készülődési idő. Értesítés: ${notificationTimeText ?? "--:--"}`
-                    : minutesUntilPreparation !== null &&
-                        minutesUntilPreparation <= 0
-                      ? `Készülj az eseményre (${preparationMinutes} perc)`
-                      : `${minutesUntilPreparation} perc múlva kezdj készülődni`}
-            </span>
+            <strong>{preparationDisplayTime}</strong>
+            <span>{preparationDescription}</span>
           </article>
 
           <article className="overview-card">

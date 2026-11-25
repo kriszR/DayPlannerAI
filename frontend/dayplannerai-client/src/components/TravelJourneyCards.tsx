@@ -81,6 +81,10 @@ export default function TravelJourneyCards({
                         <div>
                           <strong>{leg.departureTime}</strong>
                           <span>{leg.departureStop}</span>
+                          <small>
+                            A busz {leg.departureStopArrivalTime}-kor érkezik
+                            a megállóba
+                          </small>
                           {leg.departurePlatform && (
                             <small>Kocsiállás: {leg.departurePlatform}</small>
                           )}

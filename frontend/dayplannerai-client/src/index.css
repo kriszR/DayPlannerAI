@@ -330,6 +330,58 @@ button {
   gap: 25px;
 }
 
+.daily-plan-card {
+  display: block;
+}
+
+.daily-plan-content {
+  width: 100%;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.daily-plan-content > :first-child {
+  margin-top: 0;
+}
+
+.daily-plan-content > :last-child {
+  margin-bottom: 0;
+}
+
+.daily-plan-content h1,
+.daily-plan-content h2,
+.daily-plan-content h3 {
+  margin: 1.1em 0 0.45em;
+  color: #263248;
+}
+
+.daily-plan-content h1 {
+  font-size: 1.35rem;
+}
+
+.daily-plan-content h2 {
+  font-size: 1.15rem;
+}
+
+.daily-plan-content h3 {
+  font-size: 1rem;
+}
+
+.daily-plan-content p,
+.daily-plan-content ul,
+.daily-plan-content ol {
+  margin: 0 0 0.8rem;
+}
+
+.daily-plan-content ul,
+.daily-plan-content ol {
+  padding-left: 1.5rem;
+}
+
+.daily-plan-content li + li {
+  margin-top: 0.25rem;
+}
+
 .setup-item {
   display: flex;
   align-items: flex-start;

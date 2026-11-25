@@ -39,6 +39,6 @@ export async function getTripRealtime(
     serviceDate: string
 ): Promise<RealtimeTrip> {
     return apiGet<RealtimeTrip>(
-        `/api/realtime/trips/${encodeURIComponent(tripId)}?serviceDate=${encodeURIComponent(serviceDate)}`
+        `/realtime/trips/${encodeURIComponent(tripId)}?serviceDate=${encodeURIComponent(serviceDate)}`
     );
 }
