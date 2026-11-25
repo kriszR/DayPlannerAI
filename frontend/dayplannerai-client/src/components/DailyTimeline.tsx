@@ -9,6 +9,7 @@ import {
 
 import EventTravelPlanner from "./EventTravelPlanner";
 import type { CalendarEvent } from "../api/calendarApi";
+import { isOnlineCalendarEvent } from "../utils/calendarEventUtils";
 import "./DailyTimeline.css";
 
 interface DailyTimelineProps {
@@ -62,7 +63,7 @@ function DailyTimeline({
       }));
 
     const firstTimedEvent = events
-      .filter((event) => event.start && !event.isAllDay)
+      .filter((event) => event.start && !event.isAllDay && !isOnlineCalendarEvent(event))
       .map((event) => ({
         event,
         start: new Date(event.start!),

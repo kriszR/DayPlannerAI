@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -12,6 +12,7 @@ import {
   Sunrise,
   Sunset,
   RefreshCw,
+  Bell,
 } from "lucide-react";
 
 import { checkApiHealth, getProfile } from "../api/profileApi";
@@ -28,6 +29,7 @@ import {
 import WorldClock from "../components/WorldClock";
 import { generateDailyPlan } from "../api/dailyPlanApi";
 import DailyTimeline from "../components/DailyTimeline";
+import { isOnlineCalendarEvent } from "../utils/calendarEventUtils";
 
 function Dashboard() {
   const profileQuery = useQuery({
@@ -54,6 +56,44 @@ function Dashboard() {
     retry: 1,
     staleTime: 60 * 1000,
   });
+
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">(
+    typeof window !== "undefined" && "Notification" in window
+      ? Notification.permission
+      : "unsupported",
+  );
+  const [notificationMessage, setNotificationMessage] = useState("");
+
+  const enableNotifications = async () => {
+    if (!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      setNotificationMessage("Ez a böngésző nem támogatja az értesítéseket.");
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      setNotificationMessage(
+        permission === "granted"
+          ? "Értesítések engedélyezve. Az események előtt 5 perccel jelzek."
+          : permission === "denied"
+            ? "Az értesítések le vannak tiltva a böngészőben."
+            : "Az értesítési engedély nem lett megadva.",
+      );
+    } catch {
+      setNotificationMessage("Nem sikerült bekapcsolni az értesítéseket.");
+    }
+  };
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTime(new Date());
+    }, 30_000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const today = new Intl.DateTimeFormat("hu-HU", {
     weekday: "long",
@@ -119,7 +159,87 @@ function Dashboard() {
       });
   }, [calendarQuery.data, todayKey]);
 
-  const nextEvent = todayEvents[0];
+  const preparationMinutes = profileQuery.data?.preparationMinutes ?? 30;
+
+  const nextEvent = todayEvents.find((event) => {
+    if (event.isAllDay || !event.start) {
+      return false;
+    }
+
+    return new Date(event.start).getTime() > currentTime.getTime();
+  });
+
+  const nextEventIsOnline = nextEvent ? isOnlineCalendarEvent(nextEvent) : false;
+  const effectivePreparationMinutes = nextEventIsOnline ? 0 : preparationMinutes;
+
+  const preparationStart = nextEvent?.start
+    ? new Date(
+        new Date(nextEvent.start).getTime() -
+          effectivePreparationMinutes * 60_000,
+      )
+    : null;
+
+  const notificationTime = nextEvent?.start
+    ? new Date(new Date(nextEvent.start).getTime() - 5 * 60_000)
+    : null;
+  const notificationTimeText = notificationTime
+    ? new Intl.DateTimeFormat("hu-HU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(notificationTime)
+    : null;
+
+  const preparationStartTime = preparationStart
+    ? new Intl.DateTimeFormat("hu-HU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(preparationStart)
+    : null;
+
+  const minutesUntilPreparation = preparationStart
+    ? Math.ceil(
+        (preparationStart.getTime() - currentTime.getTime()) / 60_000,
+      )
+    : null;
+
+  useEffect(() => {
+    if (notificationPermission !== "granted" || !todayEvents.length) {
+      return;
+    }
+
+    const checkNotifications = () => {
+      const now = Date.now();
+
+      for (const event of todayEvents) {
+        if (!event.start || event.isAllDay) continue;
+
+        const eventStart = new Date(event.start).getTime();
+        if (Number.isNaN(eventStart)) continue;
+
+        const notifyAt = eventStart - 5 * 60_000;
+        if (now < notifyAt || now >= eventStart) continue;
+
+        const notificationKey = `dayplannerai-notification-${getLocalDateKey(new Date(eventStart))}-${event.id}`;
+        try {
+          if (window.localStorage.getItem(notificationKey)) continue;
+          new Notification(event.summary || "Közelgő naptáresemény", {
+            body: `${new Intl.DateTimeFormat("hu-HU", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }).format(new Date(eventStart))} – 5 perc múlva kezdődik.`,
+            icon: "/favicon.ico",
+          });
+          window.localStorage.setItem(notificationKey, "sent");
+        } catch (error) {
+          console.error("Could not show calendar notification:", error);
+        }
+      }
+    };
+
+    checkNotifications();
+    const intervalId = window.setInterval(checkNotifications, 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [notificationPermission, todayEvents]);
 
   const currentWeather = weatherQuery.data?.current;
   const todayForecast = weatherQuery.data?.daily[0];
@@ -442,7 +562,7 @@ function Dashboard() {
 
       <DailyTimeline
         events={todayEvents}
-        preparationMinutes={profileQuery.data?.preparationMinutes ?? 30}
+        preparationMinutes={preparationMinutes}
         departureLocation={profileQuery.data?.homeLocation ?? null}
       />
 
@@ -453,6 +573,35 @@ function Dashboard() {
         </div>
 
         <div className="overview-grid">
+          <article className="overview-card">
+            <div className="card-icon blue">
+              <Bell size={21} />
+            </div>
+            <h3>Eseményértesítések</h3>
+            <strong>
+              {notificationPermission === "granted"
+                ? "Bekapcsolva"
+                : notificationPermission === "denied"
+                  ? "Letiltva"
+                  : notificationPermission === "unsupported"
+                    ? "Nem támogatott"
+                    : "Kikapcsolva"}
+            </strong>
+            <button
+              className="weather-retry-button"
+              type="button"
+              onClick={enableNotifications}
+              disabled={notificationPermission === "granted" || notificationPermission === "unsupported"}
+            >
+              {notificationPermission === "granted"
+                ? "Engedélyezve"
+                : "Értesítések engedélyezése"}
+            </button>
+            <span>
+              {notificationMessage || "Böngészőértesítés 5 perccel az esemény előtt."}
+            </span>
+          </article>
+
           <article className="overview-card">
             <div className="card-icon purple">
               <CalendarDays size={21} />
@@ -485,6 +634,36 @@ function Dashboard() {
               {calendarQuery.isError
                 ? "A naptár nem elérhető"
                 : nextEvent?.summary || "Nincs több mai esemény"}
+            </span>
+          </article>
+
+          <article className="overview-card">
+            <div className="card-icon orange">
+              <Clock size={21} />
+            </div>
+
+            <h3>Készülődés kezdete</h3>
+            <strong>
+              {calendarQuery.isLoading
+                ? "--:--"
+                : !nextEvent || !preparationStartTime
+                  ? "--:--"
+                  : nextEventIsOnline
+                    ? "Online"
+                    : minutesUntilPreparation !== null && minutesUntilPreparation <= 0
+                      ? "Most"
+                      : preparationStartTime}
+            </strong>
+            <span>
+              {calendarQuery.isError
+                ? "A naptár nem elérhető"
+                : !nextEvent
+                  ? "Nincs további időzített esemény"
+                  : nextEventIsOnline
+                    ? `Online esemény – nincs készülődési idő. Értesítés: ${notificationTimeText ?? "--:--"}`
+                    : minutesUntilPreparation !== null && minutesUntilPreparation <= 0
+                      ? `Készülj az eseményre (${preparationMinutes} perc)`
+                      : `${minutesUntilPreparation} perc múlva kezdj készülődni`}
             </span>
           </article>
 

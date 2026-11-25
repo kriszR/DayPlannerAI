@@ -16,8 +16,10 @@ export async function generateDailyPlan(
     `Kérdezd le a Google Naptár eseményeit, ` +
     `az adott nap időjárását és a felhasználói profilt. ` +
     `Vedd figyelembe a profilban beállított felkészülési időt. ` +
-    `Ha egy időzített naptári eseménynek van helyszíne, és a profilban ismert az indulási település, ` +
+    `Ha egy időzített, személyes megjelenést igénylő naptári eseménynek van helyszíne, és a profilban ismert az indulási település, ` +
     `keress hozzá tényleges buszjáratot a GTFS-menetrendből az esemény kezdési időpontjáig. ` +
+    `Online vagy virtuális eseményhez (Zoom, Google Meet, Teams, Webex, webinar/webinár, online meeting vagy videókonferencia) ne keress buszjáratot, ` +
+    `és ne számolj buszhoz kapcsolódó felkészülési időt akkor sem, ha van location mezője. ` +
     `A járat indulási idejéből és a felkészülési időből számítsd ki a felkészülés javasolt kezdetét. ` +
     `Ne becsülj gyaloglási időt, és ne találj ki hiányzó útvonalat vagy menetrendi adatot. ` +
     `Csak a ténylegesen visszakapott adatokra támaszkodj. ` +

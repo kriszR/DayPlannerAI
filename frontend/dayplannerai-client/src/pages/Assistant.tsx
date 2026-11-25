@@ -4,6 +4,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 
 import {
@@ -140,6 +141,23 @@ function formatTransportMode(mode: TravelPlan["transportMode"]): string {
   };
 
   return labels[mode];
+}
+
+function renderInlineMarkdown(content: string): ReactNode[] {
+  const tokenPattern = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  const parts = content.split(tokenPattern);
+
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+
+    return part;
+  });
 }
 
 export default function Assistant() {
@@ -396,7 +414,9 @@ export default function Assistant() {
                 </div>
 
                 <div className="assistant-message-bubble">
-                  {message.content}
+                  {message.role === "assistant"
+                    ? renderInlineMarkdown(message.content)
+                    : message.content}
                   {message.role === "assistant" &&
                     message.availableRoutes &&
                     message.availableRoutes.length > 0 && (

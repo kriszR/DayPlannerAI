@@ -1,4 +1,14 @@
 
+.daily-timeline-heading {
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.daily-timeline-error {
+  color: #dc2626;
+}
+
 .daily-timeline {
   display: flex;
   flex-direction: column;

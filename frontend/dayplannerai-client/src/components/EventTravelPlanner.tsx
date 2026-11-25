@@ -4,6 +4,7 @@ import { Bus, RefreshCw, AlertCircle } from "lucide-react";
 import type { CalendarEvent } from "../api/calendarApi";
 import { type GtfsJourney, type GtfsDirectRoute } from "../api/aiApi";
 import { searchBusJourneys } from "../api/travelApi";
+import { isOnlineCalendarEvent } from "../utils/calendarEventUtils";
 
 import TravelRouteCards from "./TravelRouteCards";
 import "./EventTravelPlanner.css";
@@ -109,6 +110,15 @@ export default function EventTravelPlanner({
 
   if (event.isAllDay) {
     return null;
+  }
+
+  if (isOnlineCalendarEvent(event)) {
+    return (
+      <div className="event-travel-note">
+        <AlertCircle size={15} />
+        Online esemény – nincs szükség buszútvonal-keresésre.
+      </div>
+    );
   }
 
   if (!event.location?.trim()) {

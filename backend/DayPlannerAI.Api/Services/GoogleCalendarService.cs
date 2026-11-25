@@ -1,3 +1,4 @@
+using System.Globalization;
 
 using DayPlannerAI.Api.Configuration;
 using DayPlannerAI.Api.Data;
@@ -7,6 +8,7 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Calendar.v3;
+using Google.Apis.Calendar.v3.Data;
 using Google.Apis.Services;
 
 using Microsoft.AspNetCore.DataProtection;
@@ -18,6 +20,7 @@ namespace DayPlannerAI.Api.Services;
 public class GoogleCalendarService
 {
     private const string UserId = "dayplannerai-single-user";
+    private const int MaxResultsPerPage = 2500;
 
     private readonly ApplicationDbContext _context;
     private readonly GoogleCalendarOptions _options;
@@ -93,38 +96,55 @@ public class GoogleCalendarService
                 ApplicationName = "DayPlannerAI"
             });
 
-        var now = DateTime.UtcNow;
+        // Use UTC instants for the API bounds. Google returns each event's
+        // timezone-aware start/end values, which are preserved in the DTO.
+        var now = DateTimeOffset.UtcNow;
+        var timeMax = now.AddDays(days);
 
         var request = calendarService.Events.List("primary");
-
         request.TimeMinDateTimeOffset = now;
-        request.TimeMaxDateTimeOffset = now.AddDays(days);
+        request.TimeMaxDateTimeOffset = timeMax;
         request.SingleEvents = true;
         request.OrderBy = EventsResource.ListRequest.OrderByEnum.StartTime;
-        request.MaxResults = 100;
+        request.MaxResults = MaxResultsPerPage;
 
-        var response = await request.ExecuteAsync(cancellationToken);
+        var events = new List<CalendarEventDto>();
+        Events? response;
 
-        return response.Items?
-            .Select(item => new CalendarEventDto
+        do
+        {
+            response = await request.ExecuteAsync(cancellationToken);
+
+            if (response.Items != null)
             {
-                Id = item.Id,
-                Summary = item.Summary,
-                Description = item.Description,
-                Location = item.Location,
+                events.AddRange(response.Items.Select(item => new CalendarEventDto
+                {
+                    Id = item.Id,
+                    Summary = item.Summary,
+                    Description = item.Description,
+                    Location = item.Location,
 
-                Start = item.Start?.DateTimeDateTimeOffset?.ToString("O")
-                    ?? item.Start?.Date,
+                    Start = item.Start?.DateTimeDateTimeOffset?.ToString(
+                        "O",
+                        CultureInfo.InvariantCulture)
+                        ?? item.Start?.Date,
 
-                End = item.End?.DateTimeDateTimeOffset?.ToString("O")
-                    ?? item.End?.Date,
+                    End = item.End?.DateTimeDateTimeOffset?.ToString(
+                        "O",
+                        CultureInfo.InvariantCulture)
+                        ?? item.End?.Date,
 
-                IsAllDay = item.Start?.DateTimeDateTimeOffset == null
-                    && item.Start?.Date != null,
+                    IsAllDay = item.Start?.DateTimeDateTimeOffset == null
+                        && item.Start?.Date != null,
 
-                HtmlLink = item.HtmlLink
-            })
-            .ToList()
-            ?? new List<CalendarEventDto>();
+                    HtmlLink = item.HtmlLink
+                }));
+            }
+
+            request.PageToken = response.NextPageToken;
+        }
+        while (!string.IsNullOrWhiteSpace(response.NextPageToken));
+
+        return events;
     }
 }

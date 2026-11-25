@@ -48,6 +48,8 @@ public sealed class DailyPlanningSkill : IAgentSkill
         - A helyi kezdési és befejezési időpontokhoz a localStart és localEnd mezőket használd.
         - A timeRangeValid és durationMinutes mezőket tekintsd mérvadónak.
         - Egész napos eseményhez ne keress buszjáratot.
+        - Online vagy virtuális eseményhez (például Zoom, Google Meet, Microsoft Teams, Webex, webinar/webinár, online meeting vagy videókonferencia) ne keress buszjáratot akkor sem, ha a location mezőben link vagy helyszöveg szerepel.
+        - Online vagy virtuális eseménynél ne számíts buszhoz kapcsolódó felkészülési időt; az esemény kezdési időpontját és online jellegét közöld.
         - Érvénytelen vagy hiányos időintervallumú eseményhez ne tervezz időzített utazást.
         - A címben szereplő időpontot ne értelmezd át eseménykezdési időpontként.
         - A naptár üres időszakait ne tekintsd automatikusan szabadidőnek.
@@ -56,7 +58,8 @@ public sealed class DailyPlanningSkill : IAgentSkill
         - A homeLocation mezőt használd indulási településként.
         - Ha a homeLocation hiányzik, ne találj ki indulási helyet; kérdezz vissza.
         - Ha az esemény location mezője hiányzik vagy nem azonosítható településként/helyszínként, ne indíts útvonal-keresést.
-        - Minden időzített, helyszínnel rendelkező eseményhez hívd meg a search_bus_journeys eszközt, ha az indulási hely és a célhely ismert.
+        - Csak fizikai, személyes megjelenést igénylő, időzített eseményhez hívd meg a search_bus_journeys eszközt, ha az indulási hely és a célhely ismert.
+        - Online/virtuális eseménynél hagyd ki a search_bus_journeys eszközt; ne keress buszt és ne adj buszinduláshoz kötött felkészülési időt.
         - A keresés travelDate értéke az esemény localStart dátuma legyen.
         - searchMode = "arriveBy", arrivalTime = az esemény localStart időpontja.
         - A dátumot és az időpontot ne kerekítsd és ne módosítsd önkényesen.

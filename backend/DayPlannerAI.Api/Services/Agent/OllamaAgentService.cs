@@ -36,7 +36,7 @@ public sealed class OllamaAgentService
         _httpClient.BaseAddress = new Uri(
             $"{baseUrl.TrimEnd('/')}/");
 
-        _httpClient.Timeout = TimeSpan.FromMinutes(3);
+        _httpClient.Timeout = TimeSpan.FromMinutes(6);
 
         _model = configuration["Ollama:Model"]
             ?? "qwen3.5:9b";

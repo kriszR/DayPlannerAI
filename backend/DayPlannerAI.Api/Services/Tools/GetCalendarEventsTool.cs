@@ -202,8 +202,11 @@ public sealed class GetCalendarEventsTool : IAgentTool
             var summary = GetString(calendarEvent, "summary")
                 ?? "Névtelen esemény";
 
-            var start = GetString(calendarEvent, "start");
-            var end = GetString(calendarEvent, "end");
+            // Prefer validated local timestamps so the response uses the requested timezone.
+            var start = GetString(calendarEvent, "localStart")
+                ?? GetString(calendarEvent, "start");
+            var end = GetString(calendarEvent, "localEnd")
+                ?? GetString(calendarEvent, "end");
 
             var isAllDay =
                 calendarEvent.TryGetProperty("isAllDay", out var allDay) &&
@@ -218,7 +221,7 @@ public sealed class GetCalendarEventsTool : IAgentTool
             else
             {
                 result.AppendLine(
-                    $"Naptári időablak: {FormatEventTime(start)} – {FormatEventTime(end)}");
+                    $"Naptári időablak: {FormatEventTime(start, date)} – {FormatEventTime(end, date)}");
                 if (!isAllDay &&
 calendarEvent.TryGetProperty(
     "timeRangeValid", out var validRange) &&
@@ -246,13 +249,48 @@ calendarEvent.TryGetProperty(
         return result.ToString().Trim();
     }
 
-    private static string FormatEventTime(string? value)
+    private static string FormatEventTime(
+        string? value,
+        string requestedDate)
     {
         if (string.IsNullOrWhiteSpace(value))
             return "Ismeretlen";
 
-        if (DateTimeOffset.TryParse(value, out var dateTime))
-            return dateTime.ToString("HH:mm");
+        if (DateTime.TryParseExact(
+                value,
+                "yyyy-MM-dd'T'HH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var localDateTime))
+        {
+            if (DateOnly.TryParseExact(
+                    requestedDate,
+                    "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var planDate) &&
+                DateOnly.FromDateTime(localDateTime) != planDate)
+            {
+                return localDateTime.ToString(
+                    "yyyy-MM-dd HH:mm",
+                    CultureInfo.InvariantCulture);
+            }
+
+            return localDateTime.ToString(
+                "HH:mm",
+                CultureInfo.InvariantCulture);
+        }
+
+        if (DateTimeOffset.TryParse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AllowWhiteSpaces,
+                out var dateTimeOffset))
+        {
+            return dateTimeOffset.ToString(
+                "HH:mm",
+                CultureInfo.InvariantCulture);
+        }
 
         return value;
     }
