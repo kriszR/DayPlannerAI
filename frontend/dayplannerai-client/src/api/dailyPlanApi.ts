@@ -13,15 +13,16 @@ export async function generateDailyPlan(
   const message =
     `Készíts teljes napi tervet erre a dátumra: ${date}. ` +
     `Használd a DailyPlanningSkill képességet. ` +
-    `Kérdezd le a Google Naptár eseményeit, ` +
-    `az adott nap időjárását és a felhasználói profilt. ` +
+    `A backend automatikusan lekéri a Google Naptár eseményeit, ` +
+    `az adott nap időjárását és a felhasználói profilt, valamint a megfelelő eseményekhez buszjáratot keres. ` +
     `Vedd figyelembe a profilban beállított felkészülési időt. ` +
     `Ha egy időzített, személyes megjelenést igénylő naptári eseménynek van helyszíne, és a profilban ismert az indulási település, ` +
-    `keress hozzá tényleges buszjáratot a GTFS-menetrendből az esemény kezdési időpontjáig. ` +
+    `a backend tényleges GTFS buszjárat-keresési eredményét használd az esemény kezdési időpontjáig. ` +
     `Online vagy virtuális eseményhez (Zoom, Google Meet, Teams, Webex, webinar/webinár, online meeting vagy videókonferencia) ne keress buszjáratot, ` +
     `és ne számolj buszhoz kapcsolódó felkészülési időt akkor sem, ha van location mezője. ` +
     `A járat indulási idejéből és a felkészülési időből számítsd ki a felkészülés javasolt kezdetét. ` +
     `Ne becsülj gyaloglási időt, és ne találj ki hiányzó útvonalat vagy menetrendi adatot. ` +
+    `Ha valamelyik adatforrás vagy egy buszkeresés hibázik, a többi sikeres adatból akkor is készíts napi tervet. ` +
     `Csak a ténylegesen visszakapott adatokra támaszkodj. ` +
     `A választ magyarul, teljes egészében add meg.`;
 
