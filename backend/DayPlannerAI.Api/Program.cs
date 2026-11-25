@@ -71,8 +71,10 @@ builder.Services.AddHttpClient<OllamaChatService>((serviceProvider, client) =>
         .Value;
 
     client.BaseAddress = new Uri(options.BaseUrl);
-    client.Timeout = TimeSpan.FromMinutes(3);
+    client.Timeout = TimeSpan.FromMinutes(6);
 });
+
+builder.Services.AddSingleton<OllamaRequestGate>();
 
 builder.Services.AddHttpClient<MavPluszRealtimeClient>(client =>
 {

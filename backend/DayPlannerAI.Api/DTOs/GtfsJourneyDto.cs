@@ -27,6 +27,7 @@ public sealed class GtfsJourneyLegDto
 
     public string DepartureStop { get; set; } = string.Empty;
     public string? DeparturePlatform { get; set; }
+    public string DepartureStopArrivalTime { get; set; } = string.Empty;
     public string DepartureTime { get; set; } = string.Empty;
 
     public string ArrivalStop { get; set; } = string.Empty;

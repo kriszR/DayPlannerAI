@@ -144,8 +144,9 @@ public sealed class GtfsController : ControllerBase
                 to,
                 date,
                 arriveBy,
-                limit,
-                cancellationToken);
+                limit: limit,
+                includeInProgress: true,
+                cancellationToken: cancellationToken);
 
             return Ok(results);
         }

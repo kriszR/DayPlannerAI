@@ -24,19 +24,20 @@ public sealed class GtfsRouteSearchService
         DateOnly travelDate,
         TimeOnly arriveBy,
         int limit = 5,
+        bool includeInProgress = true,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(fromCity) ||
             string.IsNullOrWhiteSpace(toCity))
         {
             throw new ArgumentException(
-                "Departure and destination cities are required.");
+                "Az indulás helye és a célállomás megadása kötelező.");
         }
 
         if (Normalize(fromCity) == Normalize(toCity))
         {
             throw new ArgumentException(
-                "Departure and destination must be different.");
+                "A cél állomás nem lehet az induló állomás.");
         }
 
         var feed = await _dbContext.GtfsFeedInfos
@@ -48,7 +49,7 @@ public sealed class GtfsRouteSearchService
         {
             throw new ArgumentOutOfRangeException(
                 nameof(travelDate),
-                "The requested date is earlier than the GTFS feed validity period.");
+                "A kért dátum az GTFS adatfolyam érvényességi ideje előtt van.");
         }
 
         if (feed?.FeedEndDate is DateOnly feedEnd &&
@@ -56,7 +57,7 @@ public sealed class GtfsRouteSearchService
         {
             throw new ArgumentOutOfRangeException(
                 nameof(travelDate),
-                "The requested date is later than the GTFS feed validity period.");
+                "A kért dátum a GTFS adatfolyam érvényességi ideje után van.");
         }
         var activeServices = await GetActiveServicesAsync(
             travelDate,
@@ -111,6 +112,9 @@ public sealed class GtfsRouteSearchService
             let departureSeconds =
                 departure.DepartureSeconds ?? departure.ArrivalSeconds
 
+            let departureStopArrivalSeconds =
+                departure.ArrivalSeconds ?? departure.DepartureSeconds
+
             let arrivalSeconds =
                 arrival.ArrivalSeconds ?? arrival.DepartureSeconds
 
@@ -118,8 +122,11 @@ public sealed class GtfsRouteSearchService
                   && arrivalStops.Contains(arrival.StopId)
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
+                  && departureStopArrivalSeconds.HasValue
                   && arrivalSeconds.HasValue
                   && arrivalSeconds.Value > earliestDepartureSeconds
+                  && (includeInProgress ||
+                      departureSeconds.Value > earliestDepartureSeconds)
                   && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value <= arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
@@ -142,6 +149,7 @@ public sealed class GtfsRouteSearchService
                 route.RouteLongName,
                 DepartureStop = departureStop.StopName,
                 DeparturePlatform = departureStop.PlatformCode,
+                DepartureStopArrivalSeconds = departureStopArrivalSeconds.Value,
                 ArrivalStop = arrivalStop.StopName,
                 ArrivalPlatform = arrivalStop.PlatformCode,
                 DepartureSeconds = departureSeconds.Value,
@@ -170,6 +178,8 @@ public sealed class GtfsRouteSearchService
                 TripHeadsign = x.TripHeadsign,
                 DepartureStop = x.DepartureStop,
                 DeparturePlatform = x.DeparturePlatform,
+                DepartureStopArrivalTime =
+                    FormatGtfsTime(x.DepartureStopArrivalSeconds),
                 DepartureTime = FormatGtfsTime(x.DepartureSeconds),
                 ArrivalStop = x.ArrivalStop,
                 ArrivalPlatform = x.ArrivalPlatform,
@@ -191,19 +201,20 @@ public sealed class GtfsRouteSearchService
     DateOnly travelDate,
     TimeOnly departAfter,
     int limit = 5,
+    bool includeInProgress = true,
     CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(fromCity) ||
             string.IsNullOrWhiteSpace(toCity))
         {
             throw new ArgumentException(
-                "Departure and destination cities are required.");
+                "Az indulás helye és a célállomás megadása kötelező.");
         }
 
         if (Normalize(fromCity) == Normalize(toCity))
         {
             throw new ArgumentException(
-                "Departure and destination must be different.");
+                "A cél állomás nem lehet az induló állomás.");
         }
 
         var feed = await _dbContext.GtfsFeedInfos
@@ -215,7 +226,7 @@ public sealed class GtfsRouteSearchService
         {
             throw new ArgumentOutOfRangeException(
                 nameof(travelDate),
-                "The requested date is earlier than the GTFS feed validity period.");
+                "A kért dátum az GTFS adatfolyam érvényességi ideje előtt van.");
         }
 
         if (feed?.FeedEndDate is DateOnly feedEnd &&
@@ -223,7 +234,7 @@ public sealed class GtfsRouteSearchService
         {
             throw new ArgumentOutOfRangeException(
                 nameof(travelDate),
-                "The requested date is later than the GTFS feed validity period.");
+                "A kért dátum a GTFS adatfolyam érvényességi ideje után van.");
         }
 
         var activeServices = await GetActiveServicesAsync(
@@ -248,7 +259,7 @@ public sealed class GtfsRouteSearchService
         if (departureStops.Intersect(arrivalStops).Any())
         {
             throw new InvalidOperationException(
-                "Departure and destination resolve to the same stops.");
+                "Az induló és a célállomás ugyanazt az állomást jelenti.");
         }
 
         var departureCutoffSeconds =
@@ -256,6 +267,7 @@ public sealed class GtfsRouteSearchService
         var earliestDepartureSeconds =
             GetEarliestDepartureSeconds(travelDate);
         var includeInProgressTrips =
+            includeInProgress &&
             earliestDepartureSeconds >= 0 &&
             departureCutoffSeconds <= earliestDepartureSeconds;
 
@@ -280,6 +292,9 @@ public sealed class GtfsRouteSearchService
             let departureSeconds =
                 departure.DepartureSeconds ?? departure.ArrivalSeconds
 
+            let departureStopArrivalSeconds =
+                departure.ArrivalSeconds ?? departure.DepartureSeconds
+
             let arrivalSeconds =
                 arrival.ArrivalSeconds ?? arrival.DepartureSeconds
 
@@ -287,6 +302,7 @@ public sealed class GtfsRouteSearchService
                   && arrivalStops.Contains(arrival.StopId)
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
+                  && departureStopArrivalSeconds.HasValue
                   && arrivalSeconds.HasValue
                   && (
                       (departureSeconds.Value >= departureCutoffSeconds &&
@@ -318,6 +334,7 @@ public sealed class GtfsRouteSearchService
                 DepartureStop = departureStop.StopName,
                 DeparturePlatform = departureStop.PlatformCode,
 
+                DepartureStopArrivalSeconds = departureStopArrivalSeconds.Value,
                 ArrivalStop = arrivalStop.StopName,
                 ArrivalPlatform = arrivalStop.PlatformCode,
 
@@ -347,6 +364,8 @@ public sealed class GtfsRouteSearchService
 
                 DepartureStop = x.DepartureStop,
                 DeparturePlatform = x.DeparturePlatform,
+                DepartureStopArrivalTime =
+                    FormatGtfsTime(x.DepartureStopArrivalSeconds),
                 DepartureTime = FormatGtfsTime(x.DepartureSeconds),
 
                 ArrivalStop = x.ArrivalStop,
@@ -371,6 +390,7 @@ public sealed class GtfsRouteSearchService
         DateOnly travelDate,
         TimeOnly arriveBy,
         int limit = 5,
+        bool includeInProgress = true,
         CancellationToken cancellationToken = default)
     {
         return SearchOneTransferRoutesCoreAsync(
@@ -379,6 +399,7 @@ public sealed class GtfsRouteSearchService
             travelDate,
             arriveBy,
             null,
+            includeInProgress,
             limit,
             cancellationToken);
     }
@@ -389,6 +410,7 @@ public sealed class GtfsRouteSearchService
         DateOnly travelDate,
         TimeOnly departAfter,
         int limit = 5,
+        bool includeInProgress = true,
         CancellationToken cancellationToken = default)
     {
         return SearchOneTransferRoutesCoreAsync(
@@ -397,6 +419,7 @@ public sealed class GtfsRouteSearchService
             travelDate,
             null,
             departAfter,
+            includeInProgress,
             limit,
             cancellationToken);
     }
@@ -407,6 +430,7 @@ public sealed class GtfsRouteSearchService
         DateOnly travelDate,
         TimeOnly? arriveBy,
         TimeOnly? departAfter,
+        bool includeInProgress,
         int limit,
         CancellationToken cancellationToken)
     {
@@ -420,13 +444,13 @@ public sealed class GtfsRouteSearchService
             string.IsNullOrWhiteSpace(toCity))
         {
             throw new ArgumentException(
-                "Departure and destination cities are required.");
+                "Az indulás helye és a célállomás megadása kötelező.");
         }
 
         if (Normalize(fromCity) == Normalize(toCity))
         {
             throw new ArgumentException(
-                "Departure and destination must be different.");
+                "Az induló és a célállomás ugyanazt az állomást jelenti.");
         }
 
         var feed = await _dbContext.GtfsFeedInfos
@@ -492,6 +516,7 @@ public sealed class GtfsRouteSearchService
             departureCutoffSeconds,
             earliestDepartureSeconds + 1);
         var includeInProgressFirstLegs =
+            includeInProgress &&
             earliestDepartureSeconds >= 0 &&
             (arriveBy.HasValue ||
              departureCutoffSeconds <= earliestDepartureSeconds);
@@ -518,12 +543,16 @@ public sealed class GtfsRouteSearchService
             let departureSeconds =
                 departure.DepartureSeconds ?? departure.ArrivalSeconds
 
+            let departureStopArrivalSeconds =
+                departure.ArrivalSeconds ?? departure.DepartureSeconds
+
             let arrivalSeconds =
                 arrival.ArrivalSeconds ?? arrival.DepartureSeconds
 
             where departureStops.Contains(departure.StopId)
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
+                  && departureStopArrivalSeconds.HasValue
                   && arrivalSeconds.HasValue
                   && (
                       departureSeconds.Value >= minimumDepartureSeconds ||
@@ -549,6 +578,7 @@ public sealed class GtfsRouteSearchService
                 departureStop.StopName,
                 departureStop.PlatformCode,
                 departureSeconds.Value,
+                departureStopArrivalSeconds.Value,
                 arrival.StopId,
                 arrivalStop.StopName,
                 arrivalStop.PlatformCode,
@@ -660,6 +690,9 @@ public sealed class GtfsRouteSearchService
             let departureSeconds =
                 departure.DepartureSeconds ?? departure.ArrivalSeconds
 
+            let departureStopArrivalSeconds =
+                departure.ArrivalSeconds ?? departure.DepartureSeconds
+
             let arrivalSeconds =
                 arrival.ArrivalSeconds ?? arrival.DepartureSeconds
 
@@ -667,6 +700,7 @@ public sealed class GtfsRouteSearchService
                   && destinationStops.Contains(arrival.StopId)
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
+                  && departureStopArrivalSeconds.HasValue
                   && arrivalSeconds.HasValue
                   && departureSeconds.Value >= earliestSecondDepartureSeconds
                   && arrivalSeconds.Value > departureSeconds.Value
@@ -687,6 +721,7 @@ public sealed class GtfsRouteSearchService
                 departureStop.StopName,
                 departureStop.PlatformCode,
                 departureSeconds.Value,
+                departureStopArrivalSeconds.Value,
                 arrival.StopId,
                 arrivalStop.StopName,
                 arrivalStop.PlatformCode,
@@ -1169,6 +1204,7 @@ public sealed class GtfsRouteSearchService
     string DepartureStop,
     string? DeparturePlatform,
     int DepartureSeconds,
+    int DepartureStopArrivalSeconds,
     string ArrivalStopId,
     string ArrivalStop,
     string? ArrivalPlatform,
@@ -1187,6 +1223,8 @@ public sealed class GtfsRouteSearchService
             TripHeadsign = leg.TripHeadsign,
             DepartureStop = leg.DepartureStop,
             DeparturePlatform = leg.DeparturePlatform,
+            DepartureStopArrivalTime =
+                FormatGtfsTime(leg.DepartureStopArrivalSeconds),
             DepartureTime = FormatGtfsTime(leg.DepartureSeconds),
             ArrivalStop = leg.ArrivalStop,
             ArrivalPlatform = leg.ArrivalPlatform,

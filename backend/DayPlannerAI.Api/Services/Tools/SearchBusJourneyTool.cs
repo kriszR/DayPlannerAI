@@ -71,6 +71,12 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 ["type"] = "string",
                 ["description"] =
                     "Kívánt érkezési határidő HH:mm formátumban. Például: '10 órára kell odaérnem' esetén searchMode=arriveBy és arrivalTime='10:00'."
+            },
+            ["includeInProgress"] = new JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] =
+                    "Ha false, csak olyan járatokat keress, amelyekre az indulási megállóban még fel lehet szállni. Napi tervezésnél használd false értékkel."
             }
         },
         ["required"] = new JsonArray
@@ -207,6 +213,8 @@ public sealed class SearchBusJourneysTool : IAgentTool
 
         var searchMode = GetRequiredString(
             arguments, "searchMode");
+        var includeInProgress = GetOptionalBoolean(
+            arguments, "includeInProgress") ?? true;
 
         if (!DateOnly.TryParseExact(
                 travelDateText,
@@ -322,6 +330,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 travelPlan.TravelDate.Value,
                 departureTime,
                 limit: 5,
+                includeInProgress: includeInProgress,
                 cancellationToken: cancellationToken);
 
             // Return transfer options alongside direct routes so the user can
@@ -334,6 +343,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
                     travelPlan.TravelDate.Value,
                     departureTime,
                     limit: 5,
+                    includeInProgress: includeInProgress,
                     cancellationToken: cancellationToken);
         }
         else if (searchMode == "arriveBy")
@@ -377,6 +387,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 travelDate,
                 arrivalTime,
                 limit: 5,
+                includeInProgress: includeInProgress,
                 cancellationToken: cancellationToken);
 
             // Enforce the requested arrival deadline at the tool boundary.
@@ -393,6 +404,7 @@ public sealed class SearchBusJourneysTool : IAgentTool
                     travelDate,
                     arrivalTime,
                     limit: 5,
+                    includeInProgress: includeInProgress,
                     cancellationToken: cancellationToken);
 
             journeys = journeys
@@ -463,6 +475,16 @@ public sealed class SearchBusJourneysTool : IAgentTool
         }
 
         return value.GetString();
+    }
+
+    private static bool? GetOptionalBoolean(
+        JsonElement arguments,
+        string property)
+    {
+        return arguments.TryGetProperty(property, out var value) &&
+               value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
     }
 
     private static DateTimeOffset GetBudapestNow()

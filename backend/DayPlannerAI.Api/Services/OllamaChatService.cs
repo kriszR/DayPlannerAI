@@ -14,6 +14,7 @@ public class OllamaChatService
 {
     private readonly HttpClient _httpClient;
     private readonly OllamaOptions _options;
+    private readonly OllamaRequestGate _requestGate;
 
     private const string SystemPrompt = """
     Magyar nyelvű személyi asszisztens vagy.
@@ -76,10 +77,12 @@ public class OllamaChatService
 
     public OllamaChatService(
         HttpClient httpClient,
-        IOptions<OllamaOptions> options)
+        IOptions<OllamaOptions> options,
+        OllamaRequestGate requestGate)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _requestGate = requestGate;
     }
 
     public async Task<string> SendMessageAsync(
@@ -119,10 +122,11 @@ public class OllamaChatService
             }
         };
 
-        using var response = await _httpClient.PostAsJsonAsync(
+        using var response = await _requestGate.PostAsJsonAsync(
+            _httpClient,
             "/api/chat",
             request,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         response.EnsureSuccessStatusCode();
 
@@ -206,7 +210,7 @@ public class OllamaChatService
         const string systemPrompt = """
         Magyar nyelvű időjárási és öltözködési tanácsadó vagy.
         Kizárólag természetes, helyes magyar nyelven válaszolj, röviden,
-        legfeljebb 2-3 mondatban.
+        legfeljebb 2 rövid mondatban.
 
         A JSON egyetlen nap időjárását tartalmazza. A date és a
         todayForecast.date mező a mai helyi dátum; a currentConditions a
@@ -248,17 +252,18 @@ public class OllamaChatService
             Options = new OllamaGenerationOptions
             {
                 ContextLength = 2048,
-                MaxOutputTokens = 160,
+                MaxOutputTokens = 96,
                 Temperature = 0.2,
                 TopP = 0.8,
                 TopK = 20
             }
         };
 
-        using var response = await _httpClient.PostAsJsonAsync(
+        using var response = await _requestGate.PostAsJsonAsync(
+            _httpClient,
             "/api/chat",
             request,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         response.EnsureSuccessStatusCode();
 
@@ -320,10 +325,11 @@ public class OllamaChatService
             }
         };
 
-        using var response = await _httpClient.PostAsJsonAsync(
+        using var response = await _requestGate.PostAsJsonAsync(
+            _httpClient,
             "/api/chat",
             request,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         response.EnsureSuccessStatusCode();
 
@@ -446,10 +452,11 @@ public class OllamaChatService
             }
         };
 
-        using var response = await _httpClient.PostAsJsonAsync(
+        using var response = await _requestGate.PostAsJsonAsync(
+            _httpClient,
             "/api/chat",
             request,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         response.EnsureSuccessStatusCode();
 
