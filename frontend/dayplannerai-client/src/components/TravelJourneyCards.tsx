@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { GtfsJourney } from "../api/aiApi";
+import VehicleTracking from "./VehicleTracking";
 import "./TravelJourneyCards.css";
 
 interface TravelJourneyCardsProps {
@@ -25,6 +27,8 @@ function getWaitingMinutes(arrivalTime: string, departureTime: string): number {
 export default function TravelJourneyCards({
   journeys,
 }: TravelJourneyCardsProps) {
+  const [trackingTripId, setTrackingTripId] = useState<string | null>(null);
+
   if (journeys.length === 0) {
     return null;
   }
@@ -92,6 +96,34 @@ export default function TravelJourneyCards({
                       </div>
 
                       <small>Menetidő: {leg.durationMinutes} perc</small>
+                      {leg.isInProgress && (
+                        <>
+                          <small className="travel-journey-leg__live-status">
+                            Menetrend szerint jelenleg úton van.
+                          </small>
+                          <button
+                            className="travel-journey-leg__tracking-button"
+                            onClick={() =>
+                              setTrackingTripId(
+                                trackingTripId === leg.tripId
+                                  ? null
+                                  : leg.tripId,
+                              )
+                            }
+                            type="button"
+                          >
+                            {trackingTripId === leg.tripId
+                              ? "Követés bezárása"
+                              : "Élő GPS és késések"}
+                          </button>
+                          {trackingTripId === leg.tripId && (
+                            <VehicleTracking
+                              tripId={leg.tripId}
+                              serviceDate={journey.serviceDate}
+                            />
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
 

@@ -16,12 +16,11 @@ import {
 } from "lucide-react";
 
 import { checkApiHealth, getProfile } from "../api/profileApi";
-import { getWeatherForecast } from "../api/weatherApi";
+import { getClothingAdvice, getWeatherForecast } from "../api/weatherApi";
 import { getCalendarEvents } from "../api/calendarApi";
 import type { CalendarEvent } from "../api/calendarApi";
 import {
   formatWeatherDate,
-  getClothingAdvice,
   getWeatherDescription,
   getWeatherEmoji,
   getCurrentWeatherEmoji,
@@ -50,6 +49,24 @@ function Dashboard() {
     staleTime: 15 * 60 * 1000,
   });
 
+  const clothingAdviceQuery = useQuery({
+    queryKey: [
+      "clothing-advice",
+      weatherQuery.data?.location,
+      weatherQuery.data?.current.time,
+    ],
+    queryFn: () => {
+      if (!weatherQuery.data) {
+        throw new Error("Az időjárási adatok nem érhetők el.");
+      }
+
+      return getClothingAdvice(weatherQuery.data);
+    },
+    enabled: Boolean(weatherQuery.data),
+    staleTime: 15 * 60 * 1000,
+    retry: 1,
+  });
+
   const calendarQuery = useQuery({
     queryKey: ["calendar-events", 7],
     queryFn: () => getCalendarEvents(7),
@@ -58,7 +75,9 @@ function Dashboard() {
   });
 
   const [currentTime, setCurrentTime] = useState(() => new Date());
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">(
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | "unsupported"
+  >(
     typeof window !== "undefined" && "Notification" in window
       ? Notification.permission
       : "unsupported",
@@ -169,8 +188,12 @@ function Dashboard() {
     return new Date(event.start).getTime() > currentTime.getTime();
   });
 
-  const nextEventIsOnline = nextEvent ? isOnlineCalendarEvent(nextEvent) : false;
-  const effectivePreparationMinutes = nextEventIsOnline ? 0 : preparationMinutes;
+  const nextEventIsOnline = nextEvent
+    ? isOnlineCalendarEvent(nextEvent)
+    : false;
+  const effectivePreparationMinutes = nextEventIsOnline
+    ? 0
+    : preparationMinutes;
 
   const preparationStart = nextEvent?.start
     ? new Date(
@@ -197,9 +220,7 @@ function Dashboard() {
     : null;
 
   const minutesUntilPreparation = preparationStart
-    ? Math.ceil(
-        (preparationStart.getTime() - currentTime.getTime()) / 60_000,
-      )
+    ? Math.ceil((preparationStart.getTime() - currentTime.getTime()) / 60_000)
     : null;
 
   useEffect(() => {
@@ -486,11 +507,21 @@ function Dashboard() {
                 <div>
                   <strong>Öltözködési javaslat</strong>
                   <p>
-                    {getClothingAdvice(
-                      todayForecast.temperatureMax,
-                      todayForecast.precipitationProbabilityMax,
-                    )}
+                    {clothingAdviceQuery.isPending
+                      ? "Az AI az időjárási adatok alapján javaslatot készít..."
+                      : clothingAdviceQuery.isError
+                        ? "Nem sikerült AI-javaslatot készíteni az időjárási adatokból."
+                        : clothingAdviceQuery.data}
                   </p>
+                  {clothingAdviceQuery.isError && (
+                    <button
+                      className="weather-retry-button"
+                      onClick={() => clothingAdviceQuery.refetch()}
+                      type="button"
+                    >
+                      Újrapróbálás
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -591,14 +622,19 @@ function Dashboard() {
               className="weather-retry-button"
               type="button"
               onClick={enableNotifications}
-              disabled={notificationPermission === "granted" || notificationPermission === "unsupported"}
+              disabled={
+                notificationPermission === "granted" ||
+                notificationPermission === "unsupported"
+              }
             >
               {notificationPermission === "granted"
                 ? "Engedélyezve"
                 : "Értesítések engedélyezése"}
             </button>
+            <br />
             <span>
-              {notificationMessage || "Böngészőértesítés 5 perccel az esemény előtt."}
+              {notificationMessage ||
+                "Böngészőértesítés 5 perccel az esemény előtt."}
             </span>
           </article>
 
@@ -650,7 +686,8 @@ function Dashboard() {
                   ? "--:--"
                   : nextEventIsOnline
                     ? "Online"
-                    : minutesUntilPreparation !== null && minutesUntilPreparation <= 0
+                    : minutesUntilPreparation !== null &&
+                        minutesUntilPreparation <= 0
                       ? "Most"
                       : preparationStartTime}
             </strong>
@@ -661,7 +698,8 @@ function Dashboard() {
                   ? "Nincs további időzített esemény"
                   : nextEventIsOnline
                     ? `Online esemény – nincs készülődési idő. Értesítés: ${notificationTimeText ?? "--:--"}`
-                    : minutesUntilPreparation !== null && minutesUntilPreparation <= 0
+                    : minutesUntilPreparation !== null &&
+                        minutesUntilPreparation <= 0
                       ? `Készülj az eseményre (${preparationMinutes} perc)`
                       : `${minutesUntilPreparation} perc múlva kezdj készülődni`}
             </span>
@@ -692,47 +730,6 @@ function Dashboard() {
                 : "A szerverkapcsolat nem elérhető"}
             </span>
           </article>
-        </div>
-      </section>
-
-      <section className="section">
-        <div className="section-heading">
-          <h2>Első lépések</h2>
-          <span>Az alkalmazás beállítása</span>
-        </div>
-
-        <div className="setup-card">
-          <div className="setup-item">
-            <span className="setup-check">✓</span>
-            <div>
-              <strong>Backend csatlakoztatva</strong>
-              <p>Az ASP.NET Core API működik.</p>
-            </div>
-          </div>
-
-          <div className="setup-item">
-            <span className="setup-check">✓</span>
-            <div>
-              <strong>Adatbázis csatlakoztatva</strong>
-              <p>A PostgreSQL-adatok elérhetők.</p>
-            </div>
-          </div>
-
-          <div className="setup-item pending">
-            <span className="setup-pending">3</span>
-            <div>
-              <strong>Google Naptár összekapcsolása</strong>
-              <p>A naptáresemények szinkronizálása.</p>
-            </div>
-          </div>
-
-          <div className="setup-item pending">
-            <span className="setup-pending">4</span>
-            <div>
-              <strong>AI-asszisztens konfigurálása</strong>
-              <p>Intelligens napi tervezés engedélyezése.</p>
-            </div>
-          </div>
         </div>
       </section>
     </div>

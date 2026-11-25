@@ -119,7 +119,7 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
-                  && departureSeconds.Value > earliestDepartureSeconds
+                  && arrivalSeconds.Value > earliestDepartureSeconds
                   && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value <= arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
@@ -128,7 +128,9 @@ public sealed class GtfsRouteSearchService
                       (route.RouteType >= 200 && route.RouteType <= 299)
                   )
 
-            orderby arrivalSeconds descending,
+            orderby (departureSeconds.Value <= earliestDepartureSeconds &&
+                     arrivalSeconds.Value > earliestDepartureSeconds) descending,
+                    arrivalSeconds descending,
                     departureSeconds descending
 
             select new
@@ -152,7 +154,11 @@ public sealed class GtfsRouteSearchService
         return rawResults
             .GroupBy(x => x.TripId)
             .Select(group => group.First())
-            .OrderByDescending(x => x.ArrivalSeconds)
+            .OrderByDescending(x => IsInProgress(
+                travelDate,
+                x.DepartureSeconds,
+                x.ArrivalSeconds))
+            .ThenByDescending(x => x.ArrivalSeconds)
             .ThenByDescending(x => x.DepartureSeconds)
             .Take(Math.Clamp(limit, 1, 10))
             .Select(x => new GtfsDirectRouteDto
@@ -170,7 +176,11 @@ public sealed class GtfsRouteSearchService
                 ArrivalTime = FormatGtfsTime(x.ArrivalSeconds),
                 DurationMinutes =
                     (x.ArrivalSeconds - x.DepartureSeconds) / 60,
-                ServiceDate = travelDate
+                ServiceDate = travelDate,
+                IsInProgress = IsInProgress(
+                    travelDate,
+                    x.DepartureSeconds,
+                    x.ArrivalSeconds)
             })
             .ToList();
     }
@@ -245,6 +255,9 @@ public sealed class GtfsRouteSearchService
             (int)departAfter.ToTimeSpan().TotalSeconds;
         var earliestDepartureSeconds =
             GetEarliestDepartureSeconds(travelDate);
+        var includeInProgressTrips =
+            earliestDepartureSeconds >= 0 &&
+            departureCutoffSeconds <= earliestDepartureSeconds;
 
         var rawResults = await (
             from departure in _dbContext.GtfsStopTimes.AsNoTracking()
@@ -275,8 +288,13 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
-                  && departureSeconds.Value >= departureCutoffSeconds
-                  && departureSeconds.Value > earliestDepartureSeconds
+                  && (
+                      (departureSeconds.Value >= departureCutoffSeconds &&
+                       departureSeconds.Value > earliestDepartureSeconds) ||
+                      (includeInProgressTrips &&
+                       departureSeconds.Value <= earliestDepartureSeconds &&
+                       arrivalSeconds.Value > earliestDepartureSeconds)
+                  )
                   && arrivalSeconds.Value > departureSeconds.Value
                   && activeServiceIds.Contains(trip.ServiceId)
                   && (
@@ -284,7 +302,9 @@ public sealed class GtfsRouteSearchService
                       (route.RouteType >= 200 && route.RouteType <= 299)
                   )
 
-            orderby departureSeconds ascending,
+            orderby (departureSeconds.Value <= earliestDepartureSeconds &&
+                     arrivalSeconds.Value > earliestDepartureSeconds) descending,
+                    departureSeconds ascending,
                     arrivalSeconds ascending
 
             select new
@@ -336,7 +356,11 @@ public sealed class GtfsRouteSearchService
                 DurationMinutes =
                     (x.ArrivalSeconds - x.DepartureSeconds) / 60,
 
-                ServiceDate = travelDate
+                ServiceDate = travelDate,
+                IsInProgress = IsInProgress(
+                    travelDate,
+                    x.DepartureSeconds,
+                    x.ArrivalSeconds)
             })
             .ToList();
     }
@@ -467,6 +491,10 @@ public sealed class GtfsRouteSearchService
         var minimumDepartureSeconds = Math.Max(
             departureCutoffSeconds,
             earliestDepartureSeconds + 1);
+        var includeInProgressFirstLegs =
+            earliestDepartureSeconds >= 0 &&
+            (arriveBy.HasValue ||
+             departureCutoffSeconds <= earliestDepartureSeconds);
 
         // Find all possible first journey legs from the departure city.
         var firstLegs = await (
@@ -497,7 +525,12 @@ public sealed class GtfsRouteSearchService
                   && arrival.StopSequence > departure.StopSequence
                   && departureSeconds.HasValue
                   && arrivalSeconds.HasValue
-                  && departureSeconds.Value >= minimumDepartureSeconds
+                  && (
+                      departureSeconds.Value >= minimumDepartureSeconds ||
+                      (includeInProgressFirstLegs &&
+                       departureSeconds.Value <= earliestDepartureSeconds &&
+                       arrivalSeconds.Value > earliestDepartureSeconds)
+                  )
                   && arrivalSeconds.Value > departureSeconds.Value
                   && arrivalSeconds.Value < arrivalCutoffSeconds
                   && activeServiceIds.Contains(trip.ServiceId)
@@ -790,8 +823,8 @@ public sealed class GtfsRouteSearchService
                 ServiceDate = travelDate,
                 Legs =
                 [
-                    MapJourneyLeg(x.First),
-                    MapJourneyLeg(x.Second)
+                    MapJourneyLeg(x.First, travelDate),
+                    MapJourneyLeg(x.Second, travelDate)
                 ]
             })
             .ToList();
@@ -1060,6 +1093,18 @@ public sealed class GtfsRouteSearchService
         return (int)Math.Floor(localNow.TimeOfDay.TotalSeconds);
     }
 
+    private static bool IsInProgress(
+        DateOnly travelDate,
+        int departureSeconds,
+        int arrivalSeconds)
+    {
+        var currentSeconds = GetEarliestDepartureSeconds(travelDate);
+
+        return currentSeconds >= 0 &&
+               departureSeconds <= currentSeconds &&
+               arrivalSeconds > currentSeconds;
+    }
+
     private static string FormatGtfsTime(int seconds)
     {
         var hours = seconds / 3600;
@@ -1129,7 +1174,9 @@ public sealed class GtfsRouteSearchService
     string? ArrivalPlatform,
     int ArrivalSeconds);
 
-    private static GtfsJourneyLegDto MapJourneyLeg(RawJourneyLeg leg)
+    private static GtfsJourneyLegDto MapJourneyLeg(
+        RawJourneyLeg leg,
+        DateOnly serviceDate)
     {
         return new GtfsJourneyLegDto
         {
@@ -1145,7 +1192,11 @@ public sealed class GtfsRouteSearchService
             ArrivalPlatform = leg.ArrivalPlatform,
             ArrivalTime = FormatGtfsTime(leg.ArrivalSeconds),
             DurationMinutes =
-                (leg.ArrivalSeconds - leg.DepartureSeconds) / 60
+                (leg.ArrivalSeconds - leg.DepartureSeconds) / 60,
+            IsInProgress = IsInProgress(
+                serviceDate,
+                leg.DepartureSeconds,
+                leg.ArrivalSeconds)
         };
     }
 

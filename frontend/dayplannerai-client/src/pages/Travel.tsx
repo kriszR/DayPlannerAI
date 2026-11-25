@@ -49,7 +49,15 @@ export default function Travel() {
 
   const handleSearch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!origin.trim() || !destination.trim() || !travelDate || !time) {
+    await runSearch(travelDate, searchMode, time);
+  };
+
+  const runSearch = async (
+    date: string,
+    mode: "arriveBy" | "departAfter",
+    searchTime: string,
+  ) => {
+    if (!origin.trim() || !destination.trim() || !date || !searchTime) {
       setError("Add meg az indulási helyet, a célállomást, a dátumot és az időt.");
       return;
     }
@@ -61,9 +69,11 @@ export default function Travel() {
       const response = await searchBusJourneys({
         departureLocation: origin.trim(),
         destination: destination.trim(),
-        travelDate,
-        searchMode,
-        ...(searchMode === "arriveBy" ? { arrivalTime: time } : { departureTime: time }),
+        travelDate: date,
+        searchMode: mode,
+        ...(mode === "arriveBy"
+          ? { arrivalTime: searchTime }
+          : { departureTime: searchTime }),
       });
       setResult(response);
       if (!response.success) {
@@ -78,6 +88,17 @@ export default function Travel() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearchNow = async () => {
+    const now = new Date();
+    const nowTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const today = getLocalDateValue(now);
+
+    setTravelDate(today);
+    setTime(nowTime);
+    setSearchMode("departAfter");
+    await runSearch(today, "departAfter", nowTime);
   };
 
   const resultCount = result?.resultCount ?? 0;
@@ -158,9 +179,19 @@ export default function Travel() {
             </label>
           </div>
 
-          <button className="travel-search-form__submit" type="submit" disabled={loading}>
-            <Search size={18} /> {loading ? "Járatok keresése…" : "Járatok keresése"}
-          </button>
+          <div className="travel-search-form__actions">
+            <button className="travel-search-form__submit" type="submit" disabled={loading}>
+              <Search size={18} /> {loading ? "Járatok keresése…" : "Járatok keresése"}
+            </button>
+            <button
+              className="travel-search-form__submit travel-search-form__submit--secondary"
+              type="button"
+              disabled={loading}
+              onClick={() => void handleSearchNow()}
+            >
+              <Clock3 size={18} /> Járatok keresése most
+            </button>
+          </div>
         </form>
       </section>
 

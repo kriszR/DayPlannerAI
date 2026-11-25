@@ -67,6 +67,12 @@ export default function TravelRouteCards({ routes }: TravelRouteCardsProps) {
                 )}
               </div>
             </div>
+            {route.isInProgress && (
+              <p className="travel-route-card__live-status">
+                Menetrend szerint jelenleg úton van. A GPS-adatokat az élő
+                követés gombbal nézheted meg.
+              </p>
+            )}
             <button
               type="button"
               className="travel-route-card__tracking-button"

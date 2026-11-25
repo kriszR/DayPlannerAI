@@ -114,6 +114,17 @@
   cursor: pointer;
 }
 
+.travel-search-form__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.travel-search-form__submit--secondary {
+    background: var(--surface-secondary, #f1f3f5);
+    color: var(--text-color, #222);
+}
+
 .travel-search-form__submit:disabled {
   opacity: 0.65;
   cursor: wait;

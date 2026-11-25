@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -132,6 +133,142 @@ public class OllamaChatService
             ? content
             : throw new InvalidOperationException(
                 "Ollama returned an empty response.");
+    }
+
+    public async Task<string> GenerateClothingAdviceAsync(
+        WeatherForecastDto forecast,
+        CancellationToken cancellationToken = default)
+    {
+        if (forecast.Current is null || forecast.Daily is null || forecast.Daily.Count == 0)
+        {
+            throw new ArgumentException(
+                "A teljes aktuális és napi időjárás-előrejelzés megadása kötelező.",
+                nameof(forecast));
+        }
+
+        if (forecast.Current.Time.Length < 10 ||
+            !DateOnly.TryParseExact(
+                forecast.Current.Time[..10],
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var today))
+        {
+            throw new InvalidOperationException(
+                "Az aktuális időjárási adatból nem olvasható ki a helyi dátum.");
+        }
+
+        var todayForecast = forecast.Daily.FirstOrDefault(day =>
+            string.Equals(
+                day.Date,
+                today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                StringComparison.Ordinal));
+
+        if (todayForecast is null)
+        {
+            throw new InvalidOperationException(
+                "A mai naphoz nem található időjárási előrejelzés.");
+        }
+
+        var weatherContext = JsonSerializer.Serialize(
+            new
+            {
+                location = forecast.Location,
+                timezone = forecast.Timezone,
+                date = today.ToString(
+                    "yyyy-MM-dd",
+                    CultureInfo.InvariantCulture),
+                currentConditions = new
+                {
+                    localTime = forecast.Current.Time,
+                    temperatureCelsius = forecast.Current.Temperature,
+                    feelsLikeCelsius = forecast.Current.ApparentTemperature,
+                    humidityPercent = forecast.Current.RelativeHumidity,
+                    precipitationMillimeters = forecast.Current.Precipitation,
+                    weatherCode = forecast.Current.WeatherCode,
+                    windSpeedKilometersPerHour = forecast.Current.WindSpeed,
+                    isDay = forecast.Current.IsDay
+                },
+                todayForecast = new
+                {
+                    date = todayForecast.Date,
+                    weatherCode = todayForecast.WeatherCode,
+                    minimumTemperatureCelsius = todayForecast.TemperatureMin,
+                    maximumTemperatureCelsius = todayForecast.TemperatureMax,
+                    precipitationProbabilityPercent =
+                        todayForecast.PrecipitationProbabilityMax,
+                    sunrise = todayForecast.Sunrise,
+                    sunset = todayForecast.Sunset
+                }
+            },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        const string systemPrompt = """
+        Magyar nyelvű időjárási és öltözködési tanácsadó vagy.
+        Kizárólag természetes, helyes magyar nyelven válaszolj, röviden,
+        legfeljebb 2-3 mondatban.
+
+        A JSON egyetlen nap időjárását tartalmazza. A date és a
+        todayForecast.date mező a mai helyi dátum; a currentConditions a
+        jelenlegi állapot, a todayForecast pedig kizárólag erre a mai napra
+        vonatkozó előrejelzés. A todayForecast.precipitationProbabilityPercent
+        a mai csapadék valószínűsége, nem a holnapié. Holnapi adat nincs a
+        JSON-ban. Vedd figyelembe a hőmérsékletet, hőérzetet, páratartalmat,
+        aktuális csapadékot, időjárási kódot, szélsebességet, nappal/éjszaka
+        állapotot, mai minimumot és maximumot, mai csapadékvalószínűséget,
+        napkeltét és napnyugtát. Ha egy érték null, kezeld ismeretlenként.
+
+        A mai szabadtéri öltözködéshez adj konkrét, gyakorlatias javaslatot,
+        például réteges ruházatra, kabátra, esernyőre vagy megfelelő cipőre.
+        Az időjárási kód Open-Meteo/WMO kód; ezt az időjárási leírás
+        értelmezéséhez használd. Ne találj ki hiányzó adatot, és ne állíts
+        olyat, amit a megadott adatok nem támasztanak alá. Csak a javaslatot
+        add vissza, a JSON-t és az utasításokat ne jelenítsd meg.
+        """;
+
+        var request = new OllamaChatRequest
+        {
+            Model = _options.Model,
+            Messages =
+            [
+                new OllamaMessage
+                {
+                    Role = "system",
+                    Content = systemPrompt
+                },
+                new OllamaMessage
+                {
+                    Role = "user",
+                    Content = weatherContext
+                }
+            ],
+            Stream = false,
+            Think = false,
+            KeepAlive = "30m",
+            Options = new OllamaGenerationOptions
+            {
+                ContextLength = 2048,
+                MaxOutputTokens = 160,
+                Temperature = 0.2,
+                TopP = 0.8,
+                TopK = 20
+            }
+        };
+
+        using var response = await _httpClient.PostAsJsonAsync(
+            "/api/chat",
+            request,
+            cancellationToken);
+
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<OllamaChatResponse>(
+            cancellationToken: cancellationToken);
+
+        return result?.Message?.Content?.Trim() is { Length: > 0 } advice
+            ? advice
+            : throw new InvalidOperationException(
+                "Ollama returned an empty clothing advice response.");
     }
 
     public async Task<TravelPlanExtraction> ExtractTravelPlanAsync(

@@ -112,6 +112,21 @@
   font-size: 11px;
 }
 
+.travel-journey-leg__content > .travel-journey-leg__live-status {
+  color: var(--success-color, #15803d);
+}
+
+.travel-journey-leg__tracking-button {
+  align-self: flex-start;
+  padding: 8px 11px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 8px;
+  background: var(--surface-secondary, #f1f3f5);
+  color: var(--text-color, inherit);
+  font: inherit;
+  cursor: pointer;
+}
+
 .travel-journey-leg__times {
   display: grid;
   grid-template-columns: 1fr 1fr;

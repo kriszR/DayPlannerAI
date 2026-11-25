@@ -1,5 +1,5 @@
 
-import { apiGet } from "./http";
+import { apiGet, apiPost } from "./http";
 
 export interface CurrentWeather {
     time: string;
@@ -29,8 +29,23 @@ export interface WeatherForecast {
     daily: DailyWeather[];
 }
 
+interface ClothingAdviceResponse {
+    advice: string;
+}
+
 export async function getWeatherForecast(
     days: number = 7
 ): Promise<WeatherForecast> {
     return apiGet<WeatherForecast>(`/weather?days=${days}`);
+}
+
+export async function getClothingAdvice(
+    forecast: WeatherForecast,
+): Promise<string> {
+    const response = await apiPost<WeatherForecast, ClothingAdviceResponse>(
+        "/weather/clothing-advice",
+        forecast,
+    );
+
+    return response.advice;
 }

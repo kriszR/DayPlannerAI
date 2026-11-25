@@ -19,4 +19,5 @@ public sealed class GtfsDirectRouteDto
 
     public int DurationMinutes { get; set; }
     public DateOnly ServiceDate { get; set; }
+    public bool IsInProgress { get; set; }
 }

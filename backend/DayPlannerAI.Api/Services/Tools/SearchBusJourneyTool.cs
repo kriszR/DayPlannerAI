@@ -164,7 +164,15 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 response.Append('.');
             }
 
-            response.Append(" A részleteket az alábbi járatkártyákon találod.");
+            if (journeyCount > 0)
+            {
+                response.Append($" Emellett {journeyCount} átszállásos útvonalat is találtam.");
+                response.Append(" A részleteket a járat- és útvonalkártyákon találod.");
+            }
+            else
+            {
+                response.Append(" A részleteket az alábbi járatkártyákon találod.");
+            }
         }
         else
         {
@@ -316,20 +324,17 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 limit: 5,
                 cancellationToken: cancellationToken);
 
-            // If no direct service exists, also look for a valid one-transfer
-            // journey that departs after the requested time.
-            if (routes.Count == 0)
-            {
-                transferSearchPerformed = true;
-                journeys = await _routeSearchService
-                    .SearchOneTransferRoutesAfterAsync(
-                        departureLocation,
-                        destination,
-                        travelPlan.TravelDate.Value,
-                        departureTime,
-                        limit: 5,
-                        cancellationToken: cancellationToken);
-            }
+            // Return transfer options alongside direct routes so the user can
+            // compare both types of journey.
+            transferSearchPerformed = true;
+            journeys = await _routeSearchService
+                .SearchOneTransferRoutesAfterAsync(
+                    departureLocation,
+                    destination,
+                    travelPlan.TravelDate.Value,
+                    departureTime,
+                    limit: 5,
+                    cancellationToken: cancellationToken);
         }
         else if (searchMode == "arriveBy")
         {
@@ -380,22 +385,19 @@ public sealed class SearchBusJourneysTool : IAgentTool
                 .Where(route => IsAtOrBefore(route.ArrivalTime, arrivalTime))
                 .ToList();
 
-            if (routes.Count == 0)
-            {
-                transferSearchPerformed = true;
-                journeys = await _routeSearchService
-                    .SearchOneTransferRoutesAsync(
-                        departureLocation,
-                        destination,
-                        travelDate,
-                        arrivalTime,
-                        limit: 5,
-                        cancellationToken: cancellationToken);
+            transferSearchPerformed = true;
+            journeys = await _routeSearchService
+                .SearchOneTransferRoutesAsync(
+                    departureLocation,
+                    destination,
+                    travelDate,
+                    arrivalTime,
+                    limit: 5,
+                    cancellationToken: cancellationToken);
 
-                journeys = journeys
-                    .Where(journey => IsAtOrBefore(journey.ArrivalTime, arrivalTime))
-                    .ToList();
-            }
+            journeys = journeys
+                .Where(journey => IsAtOrBefore(journey.ArrivalTime, arrivalTime))
+                .ToList();
         }
         else
         {

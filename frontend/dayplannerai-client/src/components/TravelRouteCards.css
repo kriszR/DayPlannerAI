@@ -72,6 +72,12 @@
     gap: 12px;
 }
 
+.travel-route-card__live-status {
+    margin: 12px 0 0;
+    color: var(--success-color, #15803d);
+    font-size: 12px;
+}
+
 .travel-route-card__stop {
     display: flex;
     flex-direction: column;

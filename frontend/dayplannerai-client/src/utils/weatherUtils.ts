@@ -70,30 +70,3 @@ export function formatWeatherDate(date: string): string {
     day: "numeric",
   }).format(new Date(`${date}T12:00:00`));
 }
-
-export function getClothingAdvice(
-  temperature: number,
-  precipitationProbability: number | null,
-): string {
-  if (temperature <= 0) {
-    return "Öltözz melegen, télikabát és kesztyű ajánlott.";
-  }
-
-  if (temperature <= 10) {
-    return "Hűvös idő várható, egy melegebb kabát jól jöhet.";
-  }
-
-  if (temperature <= 18) {
-    return "Enyhe idő lesz, egy könnyű kabátot érdemes magaddal vinni.";
-  }
-
-  if (precipitationProbability !== null && precipitationProbability >= 50) {
-    return "Meleg idő várható, de ne felejts el esernyőt vinni.";
-  }
-
-  if (temperature <= 25) {
-    return "Kellemes idő lesz, könnyű ruházat ajánlott.";
-  }
-
-  return "Meleg idő várható, válassz könnyű, szellős ruházatot.";
-}

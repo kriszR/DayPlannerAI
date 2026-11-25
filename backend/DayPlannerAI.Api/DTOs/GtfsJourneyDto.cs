@@ -34,4 +34,5 @@ public sealed class GtfsJourneyLegDto
     public string ArrivalTime { get; set; } = string.Empty;
 
     public int DurationMinutes { get; set; }
+    public bool IsInProgress { get; set; }
 }

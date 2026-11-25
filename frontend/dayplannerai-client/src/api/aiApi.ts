@@ -34,6 +34,7 @@ export interface GtfsDirectRoute {
   arrivalTime: string;
   durationMinutes: number;
   serviceDate: string;
+  isInProgress: boolean;
 }
 
 export interface GtfsJourneyLeg {
@@ -49,6 +50,7 @@ export interface GtfsJourneyLeg {
   arrivalPlatform: string | null;
   arrivalTime: string;
   durationMinutes: number;
+  isInProgress: boolean;
 }
 
 export interface GtfsJourney {

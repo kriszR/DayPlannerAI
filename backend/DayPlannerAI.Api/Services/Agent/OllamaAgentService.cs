@@ -54,6 +54,7 @@ public sealed class OllamaAgentService
         var isDailyPlanning = activeContext.SkillNames.Contains(
             "DailyPlanningSkill",
             StringComparer.OrdinalIgnoreCase);
+        DateOnly? targetDailyPlanDate = isDailyPlanning ? GetDailyPlanDate(conversation) : null;
         var messages = new List<JsonObject>
         {
             new()
@@ -63,7 +64,8 @@ public sealed class OllamaAgentService
                     selectedTripContext,
                     activeContext.SkillNames,
                     activeContext.IsTravelRequest,
-                    isDailyPlanning)
+                    isDailyPlanning,
+                    targetDailyPlanDate)
             }
         };
 
@@ -833,13 +835,12 @@ public sealed class OllamaAgentService
             ["keep_alive"] = "30m",
             ["options"] = new JsonObject
             {
-                ["temperature"] = 0.2,
+                ["temperature"] = 0.15,
                 ["top_p"] = 0.8,
                 ["top_k"] = 20,
+                ["repeat_penalty"] = 1.1,
                 ["num_ctx"] = 6144,
-                // Tool selection may require several arguments and can be
-                // truncated when the model has to inspect calendar/profile data.
-                ["num_predict"] = 512
+                ["num_predict"] = 650
             }
         };
 
@@ -1004,10 +1005,11 @@ public sealed class OllamaAgentService
     }
 
     private string BuildSystemPrompt(
-        string? selectedTripContext,
-        IReadOnlyCollection<string> activeSkillNames,
-        bool isTravelRequest,
-        bool dailyPlanDataPrefetched)
+         string? selectedTripContext,
+         IReadOnlyCollection<string> activeSkillNames,
+         bool isTravelRequest,
+         bool dailyPlanDataPrefetched,
+         DateOnly? targetDailyPlanDate = null)
     {
         var timezone = TimeZoneInfo.FindSystemTimeZoneById(
             OperatingSystem.IsWindows()
@@ -1015,60 +1017,73 @@ public sealed class OllamaAgentService
                 : "Europe/Budapest");
 
         var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timezone);
+        var huCulture = CultureInfo.GetCultureInfo("hu-HU");
+        var formattedToday = now.ToString("yyyy. MMMM d. (dddd)", huCulture);
+        var formattedTargetDate = targetDailyPlanDate.HasValue
+            ? targetDailyPlanDate.Value.ToDateTime(TimeOnly.MinValue).ToString("yyyy. MMMM d. (dddd)", huCulture)
+            : formattedToday;
+
         var skillInstructions = _registry.BuildSkillInstructions(activeSkillNames);
 
         var travelRules = isTravelRequest
             ? """
               UTAZÁSI SZABÁLYOK:
-              - A teljes beszélgetésből őrizd meg az előzőleg megadott indulási és céltelepülést.
-              - A legutóbbi felhasználói pontosítás csak az általa módosított adatot írja felül; a korábbi indulási helyet, dátumot és időzítési szándékot őrizd meg.
-              - Ha a felhasználó csak a célállomást módosítja (például: "inkább Balatonfüredre"), tartsd meg a korábbi indulási helyet és a korábbi időzítési szándékot.
-              - "Most szeretnék indulni", "azonnal indulnék" vagy "minél előbb" = searchMode "departAfter", departureTime "now", travelDate a mai dátum.
-              - A "now" értéket soha ne helyettesítsd korábbi üzenetből származó fix idővel.
-              - A "10 órára kell odaérnem" vagy "legkésőbb 10-re legyek ott" érkezési határidő: searchMode "arriveBy", arrivalTime "10:00". Ilyenkor ne kérdezz indulási időt.
-              - Ha az indulási hely, a célállomás és az utazási dátum ismert, de nincs konkrét indulási idő vagy érkezési határidő, ne indíts keresést; kérdezd meg: "Mikor szeretnél indulni?"
-              - Ha minden kötelező adat ismert, minden utazási kérésnél kötelező meghívni a search_bus_journeys eszközt, még akkor is, ha csak a célállomás változott.
-              - Tilos azt írnod, hogy "keresem a járatokat" vagy "várj", ha nem hívtad meg az eszközt.
-              - Ha egy szükséges adat hiányzik, csak azt az egy adatot kérdezd meg.
-              - Ne találj ki járatot vagy menetrendi adatot.
-              - Járatszámot, indulási/érkezési időt, átszállást, menetidőt vagy útvonalat kizárólag a search_bus_journeys eszköz tényleges eredményéből közölhetsz.
-              - Ha az eszköz nem futott le, ne adj meg útvonalat vagy időpontot; kérj pontosítást, vagy jelezd, hogy a keresés nem futott le.
+                - A teljes beszélgetésből őrizd meg az előzőleg megadott indulási és céltelepülést.
+                - A legutóbbi felhasználói pontosítás csak az általa módosított adatot írja felül; a korábbi indulási helyet, dátumot és időzítési szándékot őrizd meg.
+                - Ha a felhasználó csak a célállomást módosítja (például: "inkább Balatonfüredre"), tartsd meg a korábbi indulási helyet és a korábbi időzítési szándékot.
+                - "Most szeretnék indulni", "azonnal indulnék" vagy "minél előbb" = searchMode "departAfter", departureTime "now", travelDate a mai dátum.
+                - A "now" értéket soha ne helyettesítsd korábbi üzenetből származó fix idővel.
+                - A "10 órára kell odaérnem" vagy "legkésőbb 10-re legyek ott" érkezési határidő: searchMode "arriveBy", arrivalTime "10:00". Ilyenkor ne kérdezz indulási időt.
+                - Ha az indulási hely, a célállomás és az utazási dátum ismert, de nincs konkrét indulási idő vagy érkezési határidő, ne indíts keresést; kérdezd meg: "Mikor szeretnél indulni?"
+                - Ha minden kötelező adat ismert, minden utazásiStructured kérésnél kötelező meghívni a search_bus_journeys eszközt, még akkor is, ha csak a célállomás változott.
+                - Tilos azt írnod, hogy "keresem a járatokat" vagy "várj", ha nem hívtad meg az eszközt.
+                - Ha egy szükséges adat hiányzik, csak azt az egy adatot kérdezd meg.
+                - Ne találj ki járatot vagy menetrendi adatot.
+                - Járatszámot, indulási/érkezési időt, átszállást, menetidőt vagy útvonalat kizárólag a search_bus_journeys eszköz tényleges eredményéből közölhetsz.
+                - Ha az eszköz nem futott le, ne adj meg útvonalat vagy időpontot; kérj pontosítást, vagy jelezd, hogy a keresés nem futott le.
               """
             : string.Empty;
 
         var calendarRules = activeSkillNames.Contains(
             "DailyPlanningSkill",
             StringComparer.OrdinalIgnoreCase)
-            ? """
+            ? $"""
               NAPTÁRI ÉS NAPI TERVEZÉSI SZABÁLYOK:
-              - A szerver a napi terv generálása előtt automatikusan lekérte a Google Calendar eseményeit, az időjárást és a felhasználói profilt. Az eredmények az előzményben találhatók.
-              - A szerver minden érvényes, személyes megjelenést igénylő, időzített naptári eseményhez automatikusan elvégezte a buszkeresést, ha ismert a homeLocation és az esemény helyszíne.
-              - Ne próbáld újra lekérni a naptárat, időjárást, profilt vagy buszjáratokat; ezek eredményeit használd.
-              - Google Calendar eseményt kizárólag a get_calendar_events eszköz eredményéből jeleníthetsz meg.
-              - A homeLocation az indulási település, a preparationMinutes a felhasználó felkészülési ideje.
-              - A buszkereséshez az esemény localStart dátumát és időpontját használtuk, searchMode = "arriveBy" értékkel.
-              - Ne keress és ne javasolj buszt egész napos, online/virtuális, helyszín nélküli vagy érvénytelen időintervallumú eseményhez.
-              - A busz indulási idejét, érkezési idejét, járatszámát és átszállásait kizárólag a tényleges keresési eredményből vedd át.
-              - A preparationMinutes értéket a busz indulása előtti felkészülési időként kezeld. A felkészülés kezdete = járat indulása mínusz preparationMinutes.
-              - Ne becsülj gyaloglási vagy megállóhoz jutási időt; ha ilyen adat nincs, jelezd, hogy ez nincs beleszámítva.
-              - Ha egy buszkeresés hibázott vagy nem talált járatot, az eseményt és a napi terv többi részét akkor is jelenítsd meg.
-              - Ne találj ki eseményt, időpontot, időjárást vagy menetrendi adatot.
-              - A naptár üres időszaka nem bizonyítja, hogy a felhasználó szabad.
+                - A tervezett nap pontos dátuma és magyar napneve: {formattedTargetDate}. Ezt használd a címben, ne számold át a hét napját!
+                - A szerver a napi terv generálása előtt automatikusan lekérte a Google Calendar eseményeit, az időjárást és a felhasználói profilt. Az eredmények az előzményben találhatók.
+                - A szerver minden érvényes, személyes megjelenést igénylő, időzített naptári eseményhez automatikusan elvégezte a buszkeresést, ha ismert a homeLocation és az esemény helyszíne.
+                - Ne próbáld újra lekérni a naptárat, időjárást, profilt vagy buszjáratokat; ezek eredményeit használd.
+                - Google Calendar eseményt kizárólag a get_calendar_events eszköz eredményéből jeleníthetsz meg.
+                - A homeLocation az indulási település, a preparationMinutes a felhasználó felkészülési ideje.
+                - A buszkereséshez az esemény localStart dátumát és időpontját használtuk, searchMode = "arriveBy" értékkel.
+                - Ne keress és ne javasolj buszt egész napos, online/virtuális, helyszín nélküli vagy érvénytelen időintervallumú eseményhez.
+                - A busz indulási idejét, érkezési idejét, járatszámát és átszállásait kizárólag a tényleges keresési eredményből vedd át.
+                - A preparationMinutes értéket a busz indulása előtti felkészülési időként kezeld. A felkészülés kezdete = járat indulása mínusz preparationMinutes.
+                - Ne becsülj gyaloglási vagy megállóhoz jutási időt; ha ilyen adat nincs, jelezd, hogy ez nincs beleszámítva.
+                - Ha egy buszkeresés hibázott vagy nem talált járatot, az eseményt és a napi terv többi részét akkor is jelenítsd meg.
+                - Ne találj ki eseményt, időpontot, időjárást vagy menetrendi adatot.
+                - A naptár üres időszaka nem bizonyítja, hogy a felhasználó szabad.
               """
             : string.Empty;
 
         var prefetchedDataRules = dailyPlanDataPrefetched
             ? """
-              A napi tervhez szükséges Google Calendar-, időjárás- és profiladatokat a szerver már lekérte.
-              A szerver az eseményekhez tartozó buszkereséseket is elvégezte, ahol ez lehetséges volt.
-              Minden eszközeredmény közvetlenül az előzményben található. Ezeket használd, és ne kérdezd le őket újra.
+              CSAK OLVASHATÓ RIPORT MÓD:
+              - Ez a válasz egy statikus napi összefoglaló kártyán jelenik meg, ahol a felhasználó NEM tud visszakérdezni vagy üzenetet írni.
+              - SZIGORÚAN TILOS kérdést feltenni a válasz végén, és TILOS interakcióra hívni a felhasználót (pl. "Ha szeretnél valamit beütemezni, írd meg...").
+              - Üres naptár esetén NE találj ki napi sávokat (pl. Reggel / Délután / Este órarendet).
+              - Mindig helyes, természetes magyar ragozást használj (pl. "reggelizz", "olvass", "beszélgess" – soha ne használj torz igealakokat).
               """
             : string.Empty;
 
-        return $"""
-        Te a DayPlannerAI személyi AI-asszisztense vagy. Mindig magyarul válaszolj.
+        var generalInteractionRule = dailyPlanDataPrefetched
+            ? "- Ez egy csak olvasható összefoglaló, ne kérdezz vissza."
+            : "- Ha szükséges adat hiányzik, kérdezz vissza.";
 
-        Aktuális budapesti dátum és idő: {now:yyyy-MM-dd HH:mm:ss}
+        return $"""
+        Te a DayPlannerAI személyi AI-asszisztense vagy. Mindig helyes, természetes magyar nyelven válaszolj.
+
+        Aktuális budapesti dátum és idő: {now:yyyy-MM-dd HH:mm:ss} ({formattedToday})
         Időzóna: Europe/Budapest
 
         Az ebben a kérésben aktív képességek és eszközök:
@@ -1079,7 +1094,7 @@ public sealed class OllamaAgentService
         - A legutóbbi pontosítás felülírja a korábbi értéket.
         - A Tool eredménye az egyetlen hiteles adatforrás.
         - Ne állítsd, hogy végrehajtottál egy keresést, ha nem hívtad meg a megfelelő eszközt.
-        - Ha szükséges adat hiányzik, kérdezz vissza.
+        {generalInteractionRule}
 
         {travelRules}
         {calendarRules}
@@ -1513,7 +1528,8 @@ public sealed class OllamaAgentService
                     ["departureTime"] = GetString(route, "departureTime"),
                     ["arrivalStop"] = GetString(route, "arrivalStop"),
                     ["arrivalTime"] = GetString(route, "arrivalTime"),
-                    ["durationMinutes"] = GetInt(route, "durationMinutes")
+                    ["durationMinutes"] = GetInt(route, "durationMinutes"),
+                    ["isInProgress"] = GetBoolean(route, "isInProgress")
                 });
             }
         }
@@ -1542,7 +1558,8 @@ public sealed class OllamaAgentService
                             ["departureStop"] = GetString(leg, "departureStop"),
                             ["departureTime"] = GetString(leg, "departureTime"),
                             ["arrivalStop"] = GetString(leg, "arrivalStop"),
-                            ["arrivalTime"] = GetString(leg, "arrivalTime")
+                            ["arrivalTime"] = GetString(leg, "arrivalTime"),
+                            ["isInProgress"] = GetBoolean(leg, "isInProgress")
                         });
                     }
                 }
@@ -1575,6 +1592,14 @@ public sealed class OllamaAgentService
                value.TryGetInt32(out var result)
             ? result
             : 0;
+    }
+
+    private static bool GetBoolean(
+        JsonElement element,
+        string property)
+    {
+        return element.TryGetProperty(property, out var value) &&
+               value.ValueKind == JsonValueKind.True;
     }
 
     private static string GetToolName(JsonElement toolCall)
